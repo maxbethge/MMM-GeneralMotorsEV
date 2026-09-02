@@ -1,0 +1,30 @@
+{
+  "name": "mmm-generalmotorsev",
+  "version": "1.0.0",
+  "description": "MagicMirror² module for GM EVs using the myGMC / OnStar API. Combines Teslamate-style vehicle stats with a TeslamateLocation-style map.",
+  "main": "MMM-GeneralMotorsEV.js",
+  "keywords": [
+    "magicmirror",
+    "gm",
+    "gmc",
+    "chevrolet",
+    "onstar",
+    "mygmc",
+    "ev"
+  ],
+  "author": "MMM-GeneralMotorsEV",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/example/MMM-GeneralMotorsEV"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test lib/*.test.js"
+  },
+  "dependencies": {
+    "onstarjs2": "^2.16.6"
+  }
+}

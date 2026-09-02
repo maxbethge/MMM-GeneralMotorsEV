@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>MMM-GeneralMotorsEV preview</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="../MMM-GeneralMotorsEV.css?v=18" />
+  <style>
+    html, body {
+      margin: 0;
+      background: #000;
+      color: #fff;
+      font-family: "Roboto Condensed", Roboto, "Helvetica Neue", sans-serif;
+      font-weight: 300;
+    }
+    .mirror {
+      min-height: 100vh;
+      padding: 36px 48px 48px;
+      box-sizing: border-box;
+      background: radial-gradient(ellipse at top, #151515 0%, #000 55%);
+    }
+    .region {
+      display: flex;
+      gap: 56px;
+      align-items: flex-start;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+    .module h2 {
+      font-size: 1.15rem;
+      font-weight: 400;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      border-bottom: 1px solid rgba(255,255,255,0.35);
+      padding-bottom: 6px;
+      margin: 0 0 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="mirror">
+    <div class="region">
+      <div class="module" id="sierra"></div>
+      <div class="module" id="bolt"></div>
+    </div>
+  </div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    const sierra = {
+      displayName: "Sierra EV",
+      batteryLevel: 72,
+      chargeTarget: 80,
+      rangeKm: 399,
+      odometerKm: 7758,
+      battery12v: 12.6,
+      battery12vUnit: "V",
+      tires: { fl: 42, fr: 42, rl: 40, rr: 40, unit: "psi", count: 4 },
+      pluggedIn: true,
+      charging: true,
+      plugState: "plugged",
+      chargeState: "CHARGING",
+      latitude: 42.3314,
+      longitude: -83.0458,
+      outsideTempC: 21,
+      chargeEta: new Date(Date.now() + 95 * 60 * 1000).toISOString(),
+      plugVoltage: 240,
+      lastUpdated: new Date().toISOString()
+    };
+    const bolt = {
+      displayName: "Bolt",
+      batteryLevel: 55,
+      chargeTarget: 90,
+      rangeKm: 206,
+      odometerKm: 100430,
+      battery12v: 12.4,
+      battery12vUnit: "V",
+      tires: { fl: 38, fr: 38, rl: 36, rr: 36, unit: "psi", count: 4 },
+      pluggedIn: false,
+      charging: false,
+      latitude: 42.3601,
+      longitude: -83.0677,
+      outsideTempC: 18,
+      scheduledChargeStart: "23:00",
+      lastUpdated: new Date().toISOString()
+    };
+
+    function renderModule(el, v, opts) {
+      el.innerHTML = opts.showHeader === false ? "" : `<h2>${v.displayName}</h2>`;
+      const gmv = document.createElement("div");
+      gmv.className = "gmv";
+      gmv.style.width = "450px";
+      gmv.appendChild(graphic(v, opts));
+      gmv.appendChild(metrics(v, opts));
+      gmv.appendChild(mapBox(v, el.id + "-map", opts));
+      el.appendChild(gmv);
+    }
+
+    function graphic(v, opts) {
+      const wrap = document.createElement("div");
+      wrap.className = "gmv-graphic";
+      wrap.style.width = "450px";
+      const useRange = opts.rangeDisplay === "range" && v.rangeKm != null;
+      const hudNumber = useRange ? Math.round(v.rangeKm / 1.609344) : v.batteryLevel;
+      const hudUnit = useRange ? "mi" : "%";
+      wrap.innerHTML = `
+        <div class="gmv-hud">
+          <div class="gmv-soc-row">
+            <div class="gmv-soc"><span class="gmv-soc-number">${hudNumber}</span><span class="gmv-soc-unit">${hudUnit}</span></div>
+          </div>
+          <div class="gmv-status-icons">${v.charging ? '<span class="mdi mdi-lightning-bolt"></span><span class="mdi mdi-power-plug"></span>' : ""}</div>
+          <div class="gmv-network-icons"><span class="mdi mdi-signal"></span></div>
+        </div>
+        <div class="gmv-car-stage" style="max-height:175px">
+          <img class="gmv-car-image" src="${opts.image}?v=8" alt="${v.displayName}" style="opacity:${opts.opacity};" />
+        </div>
+        <div class="gmv-graphic-bottom">
+          <div class="gmv-battery-bar ${v.charging ? "is-charging" : ""}">
+            <div class="gmv-battery-shell" style="width:250px;height:45px">
+              <div class="gmv-battery-well">
+                <div class="gmv-battery-fill" style="width:${v.batteryLevel}%"></div>
+                <div class="gmv-battery-target" style="left:${v.chargeTarget}%"></div>
+                <div class="gmv-battery-overlay">
+                  <div class="gmv-battery-soc">${v.charging ? '<span class="mdi mdi-lightning-bolt gmv-battery-bolt"></span>' : ""}<span class="gmv-battery-soc-number">${v.batteryLevel}</span><span class="gmv-battery-soc-unit">%</span></div>
+                  ${v.plugVoltage ? `<div class="gmv-battery-voltage">${v.plugVoltage} V</div>` : ""}
+                </div>
+              </div>
+              <div class="gmv-battery-nub"></div>
+            </div>
+          </div>
+          <div class="gmv-temps"><span class="mdi mdi-thermometer"></span> ${Math.round(v.outsideTempC * 9 / 5 + 32)}°F</div>
+        </div>`;
+      return wrap;
+    }
+
+    function metrics(v, opts) {
+      const unit = "psi";
+      const odo = Math.round(v.odometerKm / 1.609344).toLocaleString() + " mi";
+      const eta = v.chargeEta ? etaStr(v.chargeEta) : null;
+      const rows = [];
+      if (v.charging && eta) rows.push(["mdi-clock-outline", "Time to target", eta]);
+      rows.push(["mdi-counter", "Odometer", odo]);
+      rows.push(["mdi-battery-charging-80", "Charge target", v.chargeTarget + "%"]);
+      if (v.scheduledChargeStart) {
+        const [h, m] = v.scheduledChargeStart.split(":");
+        const d = new Date();
+        d.setHours(Number(h), Number(m), 0, 0);
+        rows.push(["mdi-clock-start", "Scheduled charge", d.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})]);
+      }
+      rows.push(["mdi-car-battery", "12V battery", v.battery12v.toFixed(1) + " V"]);
+      rows.push(["mdi-car-tire-alert", "Tires", v.tires.fl + " · " + v.tires.fr + " · " + v.tires.rl + " · " + v.tires.rr + " " + unit]);
+      rows.push(["mdi-update", "Updated", new Date(v.lastUpdated).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})]);
+      const ul = document.createElement("ul");
+      ul.className = "gmv-metrics";
+      const mo = opts.metricOptions || {};
+      if (mo.fontSize) ul.style.setProperty("--gmv-metric-font-size", typeof mo.fontSize === "number" ? mo.fontSize + "px" : mo.fontSize);
+      if (mo.valueFontSize) ul.style.setProperty("--gmv-metric-value-size", typeof mo.valueFontSize === "number" ? mo.valueFontSize + "px" : mo.valueFontSize);
+      if (mo.lineHeight) ul.style.setProperty("--gmv-metric-line-height", typeof mo.lineHeight === "number" ? mo.lineHeight + "px" : mo.lineHeight);
+      if (mo.spacing != null) ul.style.setProperty("--gmv-metric-row-gap", typeof mo.spacing === "number" ? mo.spacing + "px" : mo.spacing);
+      if (mo.valueSpacing != null) ul.style.setProperty("--gmv-metric-value-gap", typeof mo.valueSpacing === "number" ? mo.valueSpacing + "px" : mo.valueSpacing);
+      ul.innerHTML = rows.map(([icon, name, value]) =>
+        `<li class="gmv-metric"><span class="icon mdi ${icon}"></span><span class="name">${name}</span><span class="value">${value}</span></li>`
+      ).join("");
+      return ul;
+    }
+
+    function etaStr(iso) {
+      const mins = Math.max(0, Math.round((new Date(iso) - Date.now()) / 60000));
+      return Math.floor(mins / 60) + "h " + (mins % 60) + "m";
+    }
+
+    function mapBox(v, id, opts) {
+      const light = opts && (opts.mapStyle === "light" || opts.mapStyle === "teslamate");
+      const wrap = document.createElement("div");
+      wrap.className = light ? "gmv-map-wrap gmv-map-light-tiles" : "gmv-map-wrap gmv-map-dark-tiles";
+      wrap.style.height = "220px";
+      wrap.style.width = "100%";
+      if (!light) {
+        wrap.style.setProperty("--gmv-map-tile-filter", "invert(1) hue-rotate(180deg) brightness(0.95) contrast(0.9) saturate(0.35)");
+      }
+      const mapEl = document.createElement("div");
+      mapEl.className = "gmv-map";
+      mapEl.id = id;
+      wrap.appendChild(mapEl);
+      setTimeout(() => {
+        const map = L.map(mapEl, {
+          zoomControl: false,
+          dragging: false,
+          scrollWheelZoom: false,
+          doubleClickZoom: false
+        }).setView([v.latitude, v.longitude], 16);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+          attribution: "&copy; OpenStreetMap contributors",
+          subdomains: "abc",
+          maxZoom: 19
+        }).addTo(map);
+        L.marker([v.latitude, v.longitude], {
+          icon: L.divIcon({
+            className: "gmv-marker",
+            html: '<span class="mdi mdi-car"></span>',
+            iconSize: [28, 28],
+            iconAnchor: [14, 14]
+          })
+        }).addTo(map);
+        setTimeout(() => map.invalidateSize(), 300);
+      }, 80);
+      return wrap;
+    }
+
+    renderModule(document.getElementById("sierra"), sierra, {
+      image: "../images/cars/gmc-sierra-ev-denali-thunderstorm-gray.png",
+      opacity: 0.9,
+      mapStyle: "dark"
+    });
+    renderModule(document.getElementById("bolt"), bolt, {
+      image: "../images/cars/chevrolet-bolt-2017-blue.png",
+      opacity: 0.9,
+      mapStyle: "light",
+      rangeDisplay: "range"
+    });
+  </script>
+</body>
+</html>

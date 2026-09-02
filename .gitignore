@@ -1,0 +1,11 @@
+node_modules/
+cache/
+*.log
+.DS_Store
+Thumbs.db
+temp-browser-profile/
+temp-browser-profile.stale-*
+images/cars/_try_*
+images/cars/_sierra_*
+images/cars/_bolt_*
+images/cars/_cgi_*
