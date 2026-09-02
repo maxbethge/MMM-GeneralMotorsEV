@@ -2,9 +2,7 @@
 
 MagicMirror² module for GM EVs using the same OnStar / myGMC cloud API as the myGMC, myChevrolet, myBuick, and myCadillac apps.
 
-The layout combines the Teslamate graphic (car overlay, large state of charge, status icons, Teslamate-style battery cell with charge-target marker and SOC overlay) with a TeslamateLocation-style map of the vehicle’s GPS position.
-
-![Two vehicles on a MagicMirror](images/screenshots/dual-vehicles.png)
+The layout combines the car graphic (car overlay, large state of charge, status icons, Teslamate-style battery cell with charge-target marker and SOC overlay) with a map of the vehicle’s GPS position.
 
 ![2025 GMC Sierra EV Denali module](images/screenshots/sierra-ev.png)
 
@@ -50,7 +48,7 @@ This module talks to GM through [onstarjs2](https://www.npmjs.com/package/onstar
 
 ```bash
 cd ~/MagicMirror/modules
-git clone <this-repo-url> MMM-GeneralMotorsEV
+git clone https://github.com/maxbethge/MMM-GeneralMotorsEV
 cd MMM-GeneralMotorsEV
 npm install
 ```
