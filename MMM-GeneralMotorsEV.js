@@ -108,7 +108,7 @@ Module.register("MMM-GeneralMotorsEV", {
   },
 
   socketNotificationReceived(notification, payload) {
-    if (!payload || payload.identifier !== this.identifier) {
+    if (!this.payloadIsForThis(payload)) {
       return;
     }
     if (notification === "GMV_VEHICLE") {
@@ -185,7 +185,7 @@ Module.register("MMM-GeneralMotorsEV", {
 
     const big = document.createElement("div");
     big.className = "gmv-soc";
-    const useRange = this.config.rangeDisplay === "range";
+    const useRange = this.wantsRangeDisplay();
     big.innerHTML = `<span class="gmv-soc-number">${this.escape(this.primaryNumber(v, useRange))}</span><span class="gmv-soc-unit">${this.escape(this.primaryUnit(v, useRange))}</span>`;
 
     const icons = document.createElement("div");
@@ -560,9 +560,37 @@ Module.register("MMM-GeneralMotorsEV", {
     return v.outsideTempC !== null && v.outsideTempC !== undefined;
   },
 
+  payloadIsForThis(payload) {
+    if (!payload) {
+      return false;
+    }
+    const myId = String(this.identifier || "");
+    const theirId = String(payload.identifier || "");
+    if (myId && theirId && myId !== theirId) {
+      return false;
+    }
+    const myVin = String(this.config.vin || "").trim().toUpperCase();
+    const theirVin = String(payload.vin || payload.vehicle?.vin || "").trim().toUpperCase();
+    if (myVin && theirVin && myVin !== theirVin) {
+      return false;
+    }
+    return Boolean((myId && theirId && myId === theirId) || (myVin && theirVin && myVin === theirVin));
+  },
+
+  wantsRangeDisplay() {
+    const s = String(this.config.rangeDisplay ?? "").trim().toLowerCase();
+    if (!s || s === "%" || s === "soc" || s === "percent" || s === "percentage" || s === "battery") {
+      return false;
+    }
+    return s === "range" || s === "mi" || s === "km" || s === "miles" || s === "distance" || s.includes("range");
+  },
+
   primaryNumber(v, useRange) {
-    if (useRange && v.rangeKm !== null && v.rangeKm !== undefined) {
-      return this.config.imperial ? Math.round(v.rangeKm / 1.609344) : Math.round(v.rangeKm);
+    if (useRange) {
+      if (v.rangeKm !== null && v.rangeKm !== undefined) {
+        return this.config.imperial ? Math.round(v.rangeKm / 1.609344) : Math.round(v.rangeKm);
+      }
+      return "--";
     }
     if (v.batteryLevel !== null && v.batteryLevel !== undefined) {
       return Math.round(v.batteryLevel);
@@ -571,7 +599,7 @@ Module.register("MMM-GeneralMotorsEV", {
   },
 
   primaryUnit(v, useRange) {
-    if (useRange && v.rangeKm !== null && v.rangeKm !== undefined) {
+    if (useRange) {
       return this.config.imperial ? "mi" : "km";
     }
     return "%";

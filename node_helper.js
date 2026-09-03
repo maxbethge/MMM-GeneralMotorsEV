@@ -42,16 +42,48 @@ module.exports = NodeHelper.create({
     if (notification === "GMV_CONFIG") {
       this.setupInstance(payload);
     } else if (notification === "GMV_REFRESH") {
-      const instance = this.instances.get(payload?.identifier);
+      const instance = this.findInstance(payload);
       if (instance) {
         this.logInfo(`${this.label(instance)} manual refresh requested`);
         this.enqueuePoll(instance, { force: true, reason: "manual" }).catch((err) => {
           this.logError(`${this.label(instance)} refresh failed: ${err.message}`);
         });
       } else {
-        this.logInfo(`${this.name}: GMV_REFRESH ignored (no instance for ${payload?.identifier || "?"})`);
+        this.logInfo(`${this.name}: GMV_REFRESH ignored (no instance for ${payload?.identifier || payload?.vin || "?"})`);
       }
     }
+  },
+
+  instanceKey(config) {
+    const id = String(config?.identifier || "");
+    const vin = String(config?.vin || "").trim().toUpperCase();
+    return vin ? `${id}::${vin}` : id;
+  },
+
+  findInstance(payload) {
+    if (!payload) {
+      return null;
+    }
+    const key = this.instanceKey(payload);
+    if (key && this.instances.has(key)) {
+      return this.instances.get(key);
+    }
+    if (payload.identifier) {
+      for (const instance of this.instances.values()) {
+        if (instance.identifier === payload.identifier) {
+          return instance;
+        }
+      }
+    }
+    const vin = String(payload.vin || "").trim().toUpperCase();
+    if (vin) {
+      for (const instance of this.instances.values()) {
+        if (String(instance.config.vin || "").trim().toUpperCase() === vin) {
+          return instance;
+        }
+      }
+    }
+    return null;
   },
 
   label(instance) {
@@ -74,9 +106,18 @@ module.exports = NodeHelper.create({
     }
 
     const refreshMs = refreshIntervalMs(config.refreshInterval);
-    const existing = this.instances.get(config.identifier);
+    const key = this.instanceKey(config);
+    const existing = this.instances.get(key);
     if (existing && existing.config.vin === config.vin && existing.refreshMs === refreshMs && Boolean(existing.config.demo) === Boolean(config.demo) && Boolean(existing.config.forceRefreshEV) === Boolean(config.forceRefreshEV)) {
       this.logInfo(`${this.label(existing)} already polling every ${formatDuration(refreshMs)} (refreshInterval=${config.refreshInterval})`);
+      if (existing.config.demo) {
+        this.sendVehicle(config.identifier, demoForVin(config.vin, config.displayName), { demo: true });
+      } else if (config.vin) {
+        const snapshot = this.store.loadSnapshot(config.vin);
+        if (snapshot) {
+          this.sendVehicle(config.identifier, snapshot, { cached: true });
+        }
+      }
       return;
     }
 
@@ -90,6 +131,7 @@ module.exports = NodeHelper.create({
 
     const instance = {
       identifier: config.identifier,
+      key,
       config,
       refreshMs,
       polling: false,
@@ -97,7 +139,7 @@ module.exports = NodeHelper.create({
       generation: (existing?.generation || 0) + 1,
       sentSnapshot: false
     };
-    this.instances.set(config.identifier, instance);
+    this.instances.set(key, instance);
 
     this.logInfo(
       `${this.label(instance)} starting poll loop every ${formatDuration(refreshMs)} ` +
@@ -109,7 +151,7 @@ module.exports = NodeHelper.create({
   runPollLoop(instance) {
     const gen = instance.generation;
     const tick = async () => {
-      const current = this.instances.get(instance.identifier);
+      const current = this.instances.get(instance.key);
       if (!current || current.generation !== gen) {
         return;
       }
@@ -118,7 +160,7 @@ module.exports = NodeHelper.create({
       } catch (err) {
         this.logError(`${this.label(current)} poll failed: ${err.message}`);
       }
-      const still = this.instances.get(instance.identifier);
+      const still = this.instances.get(instance.key);
       if (!still || still.generation !== gen) {
         return;
       }
@@ -182,7 +224,8 @@ module.exports = NodeHelper.create({
         diagnostics: diagnostics.status === "fulfilled" ? diagnostics.value : null,
         evMetrics: evMetrics.status === "fulfilled" ? evMetrics.value : null,
         location: location.status === "fulfilled" ? location.value : null,
-        vehicleDetails: details.status === "fulfilled" ? details.value : null
+        vehicleDetails: details.status === "fulfilled" ? details.value : null,
+        vin: config.vin
       });
 
       vehicle.vin = config.vin;
@@ -199,14 +242,15 @@ module.exports = NodeHelper.create({
       this.logInfo(
         `${this.label(instance)} poll done in ${Date.now() - started}ms ` +
           `diag=${settledLabel(diagnostics)} ev=${settledLabel(evMetrics)} loc=${settledLabel(location)} ` +
-          `details=${settledLabel(details)} soc=${vehicle.batteryLevel} ` +
-          `evCall=${evCall}`
+          `details=${settledLabel(details)} soc=${vehicle.batteryLevel} rangeKm=${vehicle.rangeKm} ` +
+          `vin=${config.vin} id=${config.identifier} evCall=${evCall}`
       );
     } catch (err) {
       this.logError(`${this.label(instance)} poll error after ${Date.now() - started}ms: ${err.message || err}`);
       const snapshot = config.vin ? this.store.loadSnapshot(config.vin) : null;
       this.sendSocketNotification("GMV_ERROR", {
         identifier: config.identifier,
+        vin: config.vin || snapshot?.vin || null,
         message: err.message || String(err),
         vehicle: snapshot
       });
@@ -247,6 +291,7 @@ module.exports = NodeHelper.create({
   sendVehicle(identifier, vehicle, meta) {
     this.sendSocketNotification("GMV_VEHICLE", {
       identifier,
+      vin: vehicle?.vin || null,
       vehicle,
       meta: meta || {}
     });
