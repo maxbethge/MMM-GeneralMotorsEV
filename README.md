@@ -123,7 +123,9 @@ MagicMirror sends `config.js` to the browser, so prefer environment variables fo
 | `metricOptions.spacing` | `0` | Extra gap between metric rows |
 | `metricOptions.valueSpacing` | `12` | Space between the label and the value |
 | `refreshInterval` | `900` | Time between API polls. Numbers below `60000` are **seconds** (`900` = 15 min). `60000` or more is treated as milliseconds. Minimum 60s. Each poll is logged as `[MMM-GeneralMotorsEV] … poll done … next in …` |
-| `forceRefreshEV` | `false` | `false` reads GM’s cached EV metrics (a poll still happens; SOC may not change). `true` asks the vehicle for live metrics |
+| `forceRefreshEV` | `false` | `false` reads GM’s cached EV metrics. `true` wakes the vehicle for live SOC, but only as often as `forceRefreshEVInterval` |
+| `forceRefreshEVInterval` | same as `refreshInterval` | How often to call `refreshEVChargingMetrics` when `forceRefreshEV` is `true`. Same number rules as `refreshInterval`. Other polls (`diagnostics`, cached EV get, location) still use `refreshInterval` |
+| `timeFormat` | `12` | `12` shows `1:07 PM`. `24` shows `13:07`. Independent of the Pi’s locale |
 | `imperial` | `true` | Miles, °F, psi. `false` uses km, °C, kPa |
 | `rangeDisplay` | `"%"` | `"%"` or `"range"` for the large number |
 | `hybridView` | `true` | Show the metric grid under the graphic |
@@ -333,21 +335,23 @@ A standalone HTML preview (same CSS and car images) is at `preview/index.html`.
 
 Each cycle, per VIN:
 
-1. `diagnostics()` — odometer, 12V, tires, EV battery/range when the plan allows it
+1. `diagnostics()` — odometer, 12V, **tire pressures**, EV battery/range when the plan allows it
 2. `getEVChargingMetrics()` — SOC, charge target (`tcl`), plug/charge state, GPS, ETA
 3. `location()` — fallback coordinates from the digital twin
 4. `getVehicleDetails()` — make/model/year/nickname/image when available
+
+Tire pressures come from `diagnostics()`, not from the EV metrics call. A 429 on `refreshEVChargingMetrics` leaves the last good tires on screen; the helper still retries diagnostics on the normal `refreshInterval`.
 
 Connected Access plans often 403 diagnostics; EV metrics still populate SOC, range, and charge target.
 
 Each poll writes a line to the MagicMirror log, for example:
 
 ```
-[MMM-GeneralMotorsEV] Sierra EV poll done in 4120ms diag=ok ev=ok loc=ok details=ok soc=72 evCall=getEVChargingMetrics
+[MMM-GeneralMotorsEV] Sierra EV poll done in 4120ms diag=ok ev=ok loc=ok details=ok soc=72 tires=42/42/40/40 evCall=getEVChargingMetrics
 [MMM-GeneralMotorsEV] Sierra EV next poll in 15m
 ```
 
-If `forceRefreshEV` is `false` (the default), `getEVChargingMetrics` returns GM’s last cached EV packet. The poll still runs; SOC and plug state may stay the same until the vehicle next reports. Set `forceRefreshEV: true` to wake the vehicle for live metrics (heavier on the OnStar plan). Do not poll faster than about every 5 minutes.
+If `forceRefreshEV` is `false` (the default), `getEVChargingMetrics` returns GM’s last cached EV packet. The poll still runs; SOC and plug state may stay the same until the vehicle next reports. Set `forceRefreshEV: true` and `forceRefreshEVInterval: 3600` to wake the vehicle about once an hour while still polling diagnostics every `refreshInterval`. Do not force-refresh faster than about every 5 minutes.
 
 ## Disclaimer
 

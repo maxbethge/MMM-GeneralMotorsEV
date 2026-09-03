@@ -5,7 +5,7 @@
   <title>MMM-GeneralMotorsEV preview</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="../MMM-GeneralMotorsEV.css?v=18" />
+  <link rel="stylesheet" href="../MMM-GeneralMotorsEV.css?v=19" />
   <style>
     html, body {
       margin: 0;
@@ -25,7 +25,7 @@
       gap: 56px;
       align-items: flex-start;
       justify-content: center;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
     }
     .module h2 {
       font-size: 1.15rem;
@@ -82,7 +82,9 @@
       longitude: -83.0677,
       outsideTempC: 18,
       scheduledChargeStart: "23:00",
-      lastUpdated: new Date().toISOString()
+      lastUpdated: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
+      lastAttemptAt: new Date().toISOString(),
+      stale: true
     };
 
     function renderModule(el, v, opts) {
@@ -145,11 +147,14 @@
         const [h, m] = v.scheduledChargeStart.split(":");
         const d = new Date();
         d.setHours(Number(h), Number(m), 0, 0);
-        rows.push(["mdi-clock-start", "Scheduled charge", d.toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})]);
+        rows.push(["mdi-clock-start", "Scheduled charge", d.toLocaleTimeString("en-US", {hour:"numeric", minute:"2-digit", hour12:true})]);
       }
       rows.push(["mdi-car-battery", "12V battery", v.battery12v.toFixed(1) + " V"]);
       rows.push(["mdi-car-tire-alert", "Tires", v.tires.fl + " · " + v.tires.fr + " · " + v.tires.rl + " · " + v.tires.rr + " " + unit]);
-      rows.push(["mdi-update", "Updated", new Date(v.lastUpdated).toLocaleTimeString([], {hour:"numeric", minute:"2-digit"})]);
+      const updatedAt = v.lastAttemptAt || v.lastUpdated;
+      const failed = Boolean(v.stale);
+      const time = new Date(updatedAt).toLocaleTimeString("en-US", {hour:"numeric", minute:"2-digit", hour12:true});
+      rows.push(["mdi-update", "Updated", failed ? `Failed ${time}` : time, failed]);
       const ul = document.createElement("ul");
       ul.className = "gmv-metrics";
       const mo = opts.metricOptions || {};
@@ -158,8 +163,8 @@
       if (mo.lineHeight) ul.style.setProperty("--gmv-metric-line-height", typeof mo.lineHeight === "number" ? mo.lineHeight + "px" : mo.lineHeight);
       if (mo.spacing != null) ul.style.setProperty("--gmv-metric-row-gap", typeof mo.spacing === "number" ? mo.spacing + "px" : mo.spacing);
       if (mo.valueSpacing != null) ul.style.setProperty("--gmv-metric-value-gap", typeof mo.valueSpacing === "number" ? mo.valueSpacing + "px" : mo.valueSpacing);
-      ul.innerHTML = rows.map(([icon, name, value]) =>
-        `<li class="gmv-metric"><span class="icon mdi ${icon}"></span><span class="name">${name}</span><span class="value">${value}</span></li>`
+      ul.innerHTML = rows.map(([icon, name, value, stale]) =>
+        `<li class="gmv-metric${stale ? " is-stale" : ""}"><span class="icon mdi ${icon}"></span><span class="name">${name}</span><span class="value">${value}</span></li>`
       ).join("");
       return ul;
     }

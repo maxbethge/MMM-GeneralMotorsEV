@@ -11,6 +11,8 @@ Module.register("MMM-GeneralMotorsEV", {
     demo: false,
     refreshInterval: 900,
     forceRefreshEV: false,
+    forceRefreshEVInterval: null,
+    timeFormat: 12,
     imperial: true,
     rangeDisplay: "%",
     hybridView: true,
@@ -89,6 +91,7 @@ Module.register("MMM-GeneralMotorsEV", {
       demo: this.config.demo,
       refreshInterval: this.config.refreshInterval,
       forceRefreshEV: this.config.forceRefreshEV,
+      forceRefreshEVInterval: this.config.forceRefreshEVInterval,
       checkRequestStatus: this.config.checkRequestStatus,
       requestPollingIntervalSeconds: this.config.requestPollingIntervalSeconds,
       requestPollingTimeoutSeconds: this.config.requestPollingTimeoutSeconds
@@ -118,6 +121,7 @@ Module.register("MMM-GeneralMotorsEV", {
       this.updateDom(0);
     } else if (notification === "GMV_ERROR") {
       this.errorMessage = payload.message;
+      this.meta = { ...(this.meta || {}), stale: true };
       if (payload.vehicle) {
         this.vehicle = payload.vehicle;
       }
@@ -250,7 +254,8 @@ Module.register("MMM-GeneralMotorsEV", {
   },
 
   buildBatteryBar(v) {
-    const level = Math.max(0, Math.min(100, Number(v.batteryLevel) || 0));
+    const raw = Number(v.batteryLevel);
+    const level = Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : 0;
     const target = v.chargeTarget !== null && v.chargeTarget !== undefined ? Math.max(0, Math.min(100, Number(v.chargeTarget))) : null;
     const batWidth = this.config.sizeOptions?.batWidth || 250;
     const batHeight = this.config.sizeOptions?.batHeight || 45;
@@ -352,19 +357,31 @@ Module.register("MMM-GeneralMotorsEV", {
       this.addMetric(list, "mdi-car-tire-alert", "Tires", `${parts.join(" · ")} ${unit}`);
     }
 
-    if (v.lastUpdated) {
-      const when = new Date(v.lastUpdated);
+    const updatedAt = v.lastAttemptAt || v.lastUpdated;
+    if (updatedAt) {
+      const when = new Date(updatedAt);
       if (!Number.isNaN(when.getTime())) {
-        this.addMetric(list, "mdi-update", "Updated", when.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
+        const failed = Boolean(v.stale || this.meta?.stale || v.fetchErrors?.evMetrics || v.fetchErrors?.diagnostics);
+        const time = this.formatClock(when);
+        const label = failed ? `Failed ${time}` : time;
+        this.addMetric(list, "mdi-update", "Updated", label, {
+          stale: failed,
+          title: failed
+            ? `Refresh failed at ${time}. Showing last good data${v.lastUpdated ? ` from ${this.formatClock(new Date(v.lastUpdated))}` : ""}.`
+            : undefined
+        });
       }
     }
 
     return list;
   },
 
-  addMetric(list, icon, name, value) {
+  addMetric(list, icon, name, value, options) {
     const li = document.createElement("li");
-    li.className = "gmv-metric";
+    li.className = options?.stale ? "gmv-metric is-stale" : "gmv-metric";
+    if (options?.title) {
+      li.title = options.title;
+    }
     li.innerHTML = `<span class="icon mdi ${icon}"></span><span class="name">${this.escape(name)}</span><span class="value">${this.escape(value)}</span>`;
     list.appendChild(li);
   },
@@ -672,17 +689,29 @@ Module.register("MMM-GeneralMotorsEV", {
     return !/^(NA|N\/A|NONE|NULL|NOT.?SET|UNAVAILABLE|UNKNOWN|--)$/i.test(s);
   },
 
+  formatClock(value) {
+    const when = value instanceof Date ? value : new Date(value);
+    if (Number.isNaN(when.getTime())) {
+      return "";
+    }
+    const twentyFour = this.config.timeFormat === 24 || this.config.timeFormat === "24";
+    if (twentyFour) {
+      return when.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+    }
+    return when.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+  },
+
   formatScheduledStart(value) {
     const s = String(value).trim();
     const isoish = new Date(s);
     if (!Number.isNaN(isoish.getTime()) && /\d{4}-\d{2}-\d{2}|T\d/.test(s)) {
-      return isoish.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      return this.formatClock(isoish);
     }
     const hm = s.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
     if (hm) {
       const d = new Date();
       d.setHours(Number(hm[1]), Number(hm[2]), 0, 0);
-      return d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      return this.formatClock(d);
     }
     return s;
   },

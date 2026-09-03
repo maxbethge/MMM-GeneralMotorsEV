@@ -287,6 +287,15 @@
   white-space: nowrap;
 }
 
+.gmv-metric.is-stale,
+.gmv-metric.is-stale .name,
+.gmv-metric.is-stale .value {
+  color: #ff6b6b;
+  font-weight: 700;
+  opacity: 1;
+  text-decoration: none;
+}
+
 .gmv-map-wrap {
   margin-top: 12px;
   border-radius: 6px;
