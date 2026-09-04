@@ -27,7 +27,7 @@
 .gmv-hud {
   position: relative;
   margin-bottom: 6px;
-  padding-right: 40px;
+  padding-right: 96px;
 }
 
 .gmv-soc-row {
@@ -108,8 +108,20 @@
   position: absolute;
   right: 8px;
   top: 8px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   font-size: 1.25rem;
   opacity: 0.85;
+}
+
+.gmv-temps {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 0.85rem;
+  opacity: 0.9;
+  white-space: nowrap;
 }
 
 .gmv-graphic-bottom {
@@ -232,13 +244,6 @@
   border-radius: 0 5px 5px 0;
   background: #000;
   box-sizing: border-box;
-}
-
-.gmv-temps {
-  position: absolute;
-  right: 6px;
-  font-size: 0.85rem;
-  opacity: 0.8;
 }
 
 .gmv-metrics {

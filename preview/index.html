@@ -5,7 +5,7 @@
   <title>MMM-GeneralMotorsEV preview</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="../MMM-GeneralMotorsEV.css?v=19" />
+  <link rel="stylesheet" href="../MMM-GeneralMotorsEV.css?v=22" />
   <style>
     html, body {
       margin: 0;
@@ -82,9 +82,7 @@
       longitude: -83.0677,
       outsideTempC: 18,
       scheduledChargeStart: "23:00",
-      lastUpdated: new Date(Date.now() - 15 * 60 * 1000).toISOString(),
-      lastAttemptAt: new Date().toISOString(),
-      stale: true
+      lastUpdated: new Date().toISOString()
     };
 
     function renderModule(el, v, opts) {
@@ -111,7 +109,7 @@
             <div class="gmv-soc"><span class="gmv-soc-number">${hudNumber}</span><span class="gmv-soc-unit">${hudUnit}</span></div>
           </div>
           <div class="gmv-status-icons">${v.charging ? '<span class="mdi mdi-lightning-bolt"></span><span class="mdi mdi-power-plug"></span>' : ""}</div>
-          <div class="gmv-network-icons"><span class="mdi mdi-signal"></span></div>
+          <div class="gmv-network-icons"><div class="gmv-temps"><span class="mdi mdi-thermometer"></span> ${Math.round(v.outsideTempC * 9 / 5 + 32)}°F</div><span class="mdi mdi-signal"></span></div>
         </div>
         <div class="gmv-car-stage" style="max-height:175px">
           <img class="gmv-car-image" src="${opts.image}?v=8" alt="${v.displayName}" style="opacity:${opts.opacity};" />
@@ -130,7 +128,6 @@
               <div class="gmv-battery-nub"></div>
             </div>
           </div>
-          <div class="gmv-temps"><span class="mdi mdi-thermometer"></span> ${Math.round(v.outsideTempC * 9 / 5 + 32)}°F</div>
         </div>`;
       return wrap;
     }

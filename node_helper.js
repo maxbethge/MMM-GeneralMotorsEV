@@ -16,6 +16,11 @@ const { demoForVin } = require("./lib/demo-data");
 const { refreshIntervalMs, formatDuration, settledLabel, shouldForceRefreshEV } = require("./lib/refresh-interval");
 const { extractThrottle, throttleFromSettled, nextDelayMs, formatThrottle } = require("./lib/throttle");
 
+function tireLog(value) {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : "-";
+}
+
 function loadOnStar() {
   try {
     const mod = require("onstarjs2");
@@ -278,7 +283,7 @@ module.exports = NodeHelper.create({
         `${this.label(instance)} poll done in ${Date.now() - started}ms ` +
           `diag=${settledLabel(diagnostics)} ev=${settledLabel(evMetrics)} loc=${settledLabel(location)} ` +
           `details=${settledLabel(details)} soc=${vehicle.batteryLevel} rangeKm=${vehicle.rangeKm} ` +
-          `tires=${tires.fl ?? "-"}/${tires.fr ?? "-"}/${tires.rl ?? "-"}/${tires.rr ?? "-"} ` +
+          `tires=${tireLog(tires.fl)}/${tireLog(tires.fr)}/${tireLog(tires.rl)}/${tireLog(tires.rr)} ` +
           `stale=${vehicle.stale} vin=${config.vin} id=${config.identifier} evCall=${evCall}`
       );
       this.logThrottle(instance, evThrottle || otherThrottle, delay);

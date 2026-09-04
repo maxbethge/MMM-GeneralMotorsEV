@@ -208,6 +208,12 @@ Module.register("MMM-GeneralMotorsEV", {
 
     const net = document.createElement("div");
     net.className = "gmv-network-icons";
+    if (this.shouldShowTemps(v) && v.outsideTempC !== null && v.outsideTempC !== undefined) {
+      const temps = document.createElement("div");
+      temps.className = "gmv-temps";
+      temps.innerHTML = `<span class="mdi mdi-thermometer"></span> ${this.escape(this.formatTemp(v.outsideTempC))}`;
+      net.appendChild(temps);
+    }
     const signal = document.createElement("span");
     signal.className = `mdi ${this.errorMessage ? "mdi-signal-off" : "mdi-signal"}`;
     net.appendChild(signal);
@@ -241,12 +247,6 @@ Module.register("MMM-GeneralMotorsEV", {
     bottom.className = "gmv-graphic-bottom";
     if (this.config.displayOptions?.batteryBar?.visible !== false) {
       bottom.appendChild(this.buildBatteryBar(v));
-    }
-    if (this.shouldShowTemps(v) && v.outsideTempC !== null && v.outsideTempC !== undefined) {
-      const temps = document.createElement("div");
-      temps.className = "gmv-temps";
-      temps.innerHTML = `<span class="mdi mdi-thermometer"></span> ${this.escape(this.formatTemp(v.outsideTempC))}`;
-      bottom.appendChild(temps);
     }
     wrap.appendChild(bottom);
 
