@@ -283,7 +283,7 @@ module.exports = NodeHelper.create({
         `${this.label(instance)} poll done in ${Date.now() - started}ms ` +
           `diag=${settledLabel(diagnostics)} ev=${settledLabel(evMetrics)} loc=${settledLabel(location)} ` +
           `details=${settledLabel(details)} soc=${vehicle.batteryLevel} rangeKm=${vehicle.rangeKm} ` +
-          `tires=${tireLog(tires.fl)}/${tireLog(tires.fr)}/${tireLog(tires.rl)}/${tireLog(tires.rr)} ` +
+          `tires=${tireLog(tires.fl)}/${tireLog(tires.fr)}/${tireLog(tires.rl)}/${tireLog(tires.rr)}${tires.unit ? ` ${tires.unit}` : ""} ` +
           `stale=${vehicle.stale} vin=${config.vin} id=${config.identifier} evCall=${evCall}`
       );
       this.logThrottle(instance, evThrottle || otherThrottle, delay);

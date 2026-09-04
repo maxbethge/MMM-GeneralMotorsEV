@@ -644,17 +644,28 @@ Module.register("MMM-GeneralMotorsEV", {
       return "--";
     }
     const n = Number(value);
+    if (!Number.isFinite(n)) {
+      return "--";
+    }
+    const u = upper(unit);
+    // GM often labels PSI readings as kPa. 57 kPa would be a flat tire; 57 PSI is normal.
+    const looksKpa = n >= 140;
+    const looksBar = n > 0 && n <= 12 && /BAR/.test(u) && !/KPA/.test(u);
+    const kind = looksKpa ? "kpa" : looksBar ? "bar" : "psi";
     if (this.config.imperial) {
-      if (/KPA/.test(upper(unit))) {
+      if (kind === "kpa") {
         return (n / 6.89476).toFixed(0);
       }
-      if (/BAR/.test(upper(unit))) {
+      if (kind === "bar") {
         return (n * 14.5038).toFixed(0);
       }
       return n.toFixed(0);
     }
-    if (/PSI/.test(upper(unit)) || !unit) {
+    if (kind === "psi") {
       return (n * 6.89476).toFixed(0);
+    }
+    if (kind === "bar") {
+      return (n * 100).toFixed(0);
     }
     return n.toFixed(0);
   },
