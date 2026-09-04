@@ -65,7 +65,13 @@ Module.register("MMM-GeneralMotorsEV", {
     this.errorMessage = null;
     this.map = null;
     this.marker = null;
+    this._tileLayer = null;
     this._root = null;
+    this._mapWrap = null;
+    this._mapRefreshTimers = [];
+    this._mapInitTimer = null;
+    this._mapObserver = null;
+    this._visObserver = null;
     if (this.config.showHeader === false && this.data) {
       this.data.header = undefined;
     }
@@ -75,7 +81,22 @@ Module.register("MMM-GeneralMotorsEV", {
   notificationReceived(notification) {
     if (notification === "DOM_OBJECTS_CREATED") {
       this.sendSocketNotification("GMV_CONFIG", this.getPayloadConfig());
+      this.watchModuleVisibility();
+    } else if (notification === "SCENES_CHANGED") {
+      // MMM-Scenes2 fires this between exit and enter; wait for the show animation.
+      this.scheduleMapRefresh();
     }
+  },
+
+  suspend() {
+    this.cancelMapRefresh();
+  },
+
+  resume() {
+    if (this._mapWrap && !this.map) {
+      this.initLeafletMap(this._mapWrap);
+    }
+    this.scheduleMapRefresh();
   },
 
   getPayloadConfig() {
@@ -135,14 +156,20 @@ Module.register("MMM-GeneralMotorsEV", {
       this._root.className = "gmv";
     }
     this.render(this._root);
+    this.watchModuleVisibility();
     return this._root;
   },
 
   render(root) {
+    const keptMap = this._mapWrap;
+    if (keptMap && keptMap.parentNode) {
+      keptMap.parentNode.removeChild(keptMap);
+    }
     root.innerHTML = "";
     root.style.width = `${this.config.sizeOptions.width || 450}px`;
 
     if (!this.vehicle) {
+      this.teardownMap();
       const loading = document.createElement("div");
       loading.className = "gmv-loading";
       loading.innerHTML = '<span class="mdi mdi-car-connected"></span> Connecting to OnStar…';
@@ -159,6 +186,8 @@ Module.register("MMM-GeneralMotorsEV", {
     }
     if (this.config.showMap) {
       root.appendChild(this.buildMap());
+    } else {
+      this.teardownMap();
     }
     if (this.errorMessage) {
       const err = document.createElement("div");
@@ -430,10 +459,36 @@ Module.register("MMM-GeneralMotorsEV", {
   },
 
   buildMap() {
+    const v = this.vehicle;
+    const lat = Number(v.latitude);
+    const lng = Number(v.longitude);
+    const hasCoords = Number.isFinite(lat) && Number.isFinite(lng);
+    if (!hasCoords || typeof window.L === "undefined") {
+      this.teardownMap();
+      const wrap = document.createElement("div");
+      wrap.className = "gmv-map-wrap gmv-map-empty";
+      wrap.style.width = this.config.mapWidth || "100%";
+      wrap.style.height = this.config.mapHeight || "220px";
+      wrap.textContent = !hasCoords ? "Location unavailable" : "Loading map…";
+      return wrap;
+    }
+
+    if (this._mapWrap && this._mapWrap.querySelector(".gmv-map")) {
+      this.applyMapWrapSize(this._mapWrap);
+      if (this.map) {
+        this.syncMapPosition(lat, lng);
+        if (this.hidden || !this.mapHasSize(this.map)) {
+          this.scheduleMapRefresh();
+        }
+      } else {
+        this.initLeafletMap(this._mapWrap);
+      }
+      return this._mapWrap;
+    }
+
     const wrap = document.createElement("div");
     wrap.className = "gmv-map-wrap";
-    wrap.style.width = this.config.mapWidth || "100%";
-    wrap.style.height = this.config.mapHeight || "220px";
+    this.applyMapWrapSize(wrap);
     const mapLook = this.resolveMapLook();
     if (mapLook.isLight) {
       wrap.classList.add("gmv-map-light-tiles");
@@ -446,69 +501,208 @@ Module.register("MMM-GeneralMotorsEV", {
       }
     }
 
-    const v = this.vehicle;
-    if (v.latitude === null || v.longitude === null || typeof window.L === "undefined") {
-      wrap.classList.add("gmv-map-empty");
-      wrap.textContent = v.latitude === null ? "Location unavailable" : "Loading map…";
-      this.map = null;
-      this.marker = null;
-      return wrap;
-    }
-
     const mapEl = document.createElement("div");
     mapEl.className = "gmv-map";
     wrap.appendChild(mapEl);
+    this._mapWrap = wrap;
+    this.initLeafletMap(wrap);
+    return wrap;
+  },
 
-    const lat = Number(v.latitude);
-    const lng = Number(v.longitude);
-    const self = this;
-    setTimeout(() => {
-      if (!mapEl.isConnected || typeof window.L === "undefined") {
+  initLeafletMap(wrap) {
+    const mapEl = wrap && wrap.querySelector(".gmv-map");
+    if (!mapEl || typeof window.L === "undefined") {
+      return;
+    }
+    if (this.map) {
+      this.scheduleMapRefresh();
+      return;
+    }
+    if (this._mapInitTimer) {
+      clearTimeout(this._mapInitTimer);
+    }
+    let attempts = 0;
+    const start = () => {
+      this._mapInitTimer = null;
+      if (this.map) {
+        this.scheduleMapRefresh();
         return;
       }
-      if (self.map) {
-        try {
-          self.map.remove();
-        } catch (err) {
-          // ignore
+      if (!mapEl.isConnected) {
+        attempts += 1;
+        if (attempts > 40) {
+          return;
         }
-        self.map = null;
+        this._mapInitTimer = setTimeout(start, 150);
+        return;
       }
-      const map = window.L.map(mapEl, {
-        zoomControl: false,
-        attributionControl: true,
-        dragging: false,
-        scrollWheelZoom: false,
-        doubleClickZoom: false,
-        boxZoom: false,
-        keyboard: false
-      }).setView([lat, lng], self.config.zoomLevel || 16);
+      const lat = Number(this.vehicle?.latitude);
+      const lng = Number(this.vehicle?.longitude);
+      if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+        return;
+      }
+      const mapLook = this.resolveMapLook();
+      try {
+        const map = window.L.map(mapEl, {
+          zoomControl: false,
+          attributionControl: true,
+          dragging: false,
+          scrollWheelZoom: false,
+          doubleClickZoom: false,
+          boxZoom: false,
+          keyboard: false
+        }).setView([lat, lng], this.config.zoomLevel || 16);
 
-      const tileOpts = {
-        attribution: mapLook.tileAttribution,
-        maxZoom: 19,
-        subdomains: mapLook.tileSubdomains
-      };
-      window.L.tileLayer(mapLook.tileUrl, tileOpts).addTo(map);
-      if (mapLook.tileLabelUrl) {
-        window.L.tileLayer(mapLook.tileLabelUrl, {
+        const tileOpts = {
+          attribution: mapLook.tileAttribution,
           maxZoom: 19,
-          pane: "overlayPane"
-        }).addTo(map);
+          subdomains: mapLook.tileSubdomains
+        };
+        const tileLayer = window.L.tileLayer(mapLook.tileUrl, tileOpts).addTo(map);
+        if (mapLook.tileLabelUrl) {
+          window.L.tileLayer(mapLook.tileLabelUrl, {
+            maxZoom: 19,
+            pane: "overlayPane"
+          }).addTo(map);
+        }
+
+        const icon = window.L.divIcon({
+          className: "gmv-marker",
+          html: '<span class="mdi mdi-car"></span>',
+          iconSize: [28, 28],
+          iconAnchor: [14, 14]
+        });
+        this.marker = window.L.marker([lat, lng], { icon }).addTo(map);
+        this._tileLayer = tileLayer;
+        this.map = map;
+        this.observeMapContainer(wrap);
+        this.scheduleMapRefresh();
+      } catch (err) {
+        this.scheduleMapRefresh();
       }
+    };
+    this._mapInitTimer = setTimeout(start, 50);
+  },
 
-      const icon = window.L.divIcon({
-        className: "gmv-marker",
-        html: '<span class="mdi mdi-car"></span>',
-        iconSize: [28, 28],
-        iconAnchor: [14, 14]
-      });
-      self.marker = window.L.marker([lat, lng], { icon }).addTo(map);
-      self.map = map;
-      setTimeout(() => map.invalidateSize(), 250);
-    }, 50);
+  applyMapWrapSize(wrap) {
+    wrap.style.width = this.config.mapWidth || "100%";
+    wrap.style.height = this.config.mapHeight || "220px";
+  },
 
-    return wrap;
+  syncMapPosition(lat, lng) {
+    const map = this.map;
+    if (!map) {
+      return;
+    }
+    try {
+      map.setView([lat, lng], this.config.zoomLevel || 16, { animate: false });
+      if (this.marker && typeof this.marker.setLatLng === "function") {
+        this.marker.setLatLng([lat, lng]);
+      }
+    } catch (err) {
+      // ignore
+    }
+  },
+
+  teardownMap() {
+    this.cancelMapRefresh();
+    this.disconnectMapObserver();
+    if (this._mapInitTimer) {
+      clearTimeout(this._mapInitTimer);
+      this._mapInitTimer = null;
+    }
+    if (this.map) {
+      try {
+        this.map.remove();
+      } catch (err) {
+        // ignore
+      }
+    }
+    this.map = null;
+    this.marker = null;
+    this._tileLayer = null;
+    this._mapWrap = null;
+  },
+
+  mapHasSize(map) {
+    if (!map || typeof map.getSize !== "function") {
+      return false;
+    }
+    const size = map.getSize();
+    return Boolean(size && size.x > 0 && size.y > 0);
+  },
+
+  refreshMap() {
+    const map = this.map;
+    if (!map) {
+      return;
+    }
+    try {
+      if (!this.mapHasSize(map)) {
+        return;
+      }
+      map.invalidateSize({ animate: false, pan: false });
+      const lat = Number(this.vehicle?.latitude);
+      const lng = Number(this.vehicle?.longitude);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        this.syncMapPosition(lat, lng);
+      }
+      if (this._tileLayer && typeof this._tileLayer.redraw === "function") {
+        this._tileLayer.redraw();
+      }
+    } catch (err) {
+      // Leaflet throws if the container was detached mid-refresh.
+    }
+  },
+
+  cancelMapRefresh() {
+    for (const timer of this._mapRefreshTimers || []) {
+      clearTimeout(timer);
+    }
+    this._mapRefreshTimers = [];
+  },
+
+  scheduleMapRefresh() {
+    this.cancelMapRefresh();
+    // MMM-Scenes2 default enter animation is 1000ms; MM hide uses display:none
+    // so Leaflet caches a 0×0 size until the module is visible again.
+    this._mapRefreshTimers = [0, 50, 250, 600, 1100, 1600].map((ms) =>
+      setTimeout(() => this.refreshMap(), ms)
+    );
+  },
+
+  disconnectMapObserver() {
+    if (this._mapObserver) {
+      this._mapObserver.disconnect();
+      this._mapObserver = null;
+    }
+  },
+
+  observeMapContainer(el) {
+    this.disconnectMapObserver();
+    if (!el || typeof ResizeObserver === "undefined") {
+      return;
+    }
+    this._mapObserver = new ResizeObserver(() => {
+      this.refreshMap();
+    });
+    this._mapObserver.observe(el);
+  },
+
+  watchModuleVisibility() {
+    const node = this._root && this._root.closest ? this._root.closest(".module") : null;
+    if (!node || typeof MutationObserver === "undefined") {
+      return;
+    }
+    if (this._visObserver) {
+      return;
+    }
+    this._visObserver = new MutationObserver(() => {
+      if (!this.hidden) {
+        this.scheduleMapRefresh();
+      }
+    });
+    this._visObserver.observe(node, { attributes: true, attributeFilter: ["class", "style"] });
   },
 
   isLightMapStyle() {

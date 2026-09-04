@@ -129,7 +129,7 @@ MagicMirror sends `config.js` to the browser, so prefer environment variables fo
 | `imperial` | `true` | Miles, °F, psi. `false` uses km, °C, kPa |
 | `rangeDisplay` | `"%"` | `"%"` or `"range"` for the large number |
 | `hybridView` | `true` | Show the metric grid under the graphic |
-| `showMap` | `true` | Leaflet map using GPS from OnStar |
+| `showMap` | `true` | Leaflet map using GPS from OnStar. Recovers after [MMM-Scenes2](https://github.com/MMRIZE/MMM-Scenes2) hide/show (and other `display:none` hides) by keeping the map instance and calling `invalidateSize` when the module is visible again |
 | `mapHeight` / `mapWidth` | `"220px"` / `"100%"` | Map container size |
 | `zoomLevel` | `16` | Leaflet zoom. Raise to `17`–`18` for more street names |
 | `mapStyle` | `"dark"` | `"dark"` inverts OSM tiles for the mirror. `"light"` uses the same unfiltered OpenStreetMap tiles as [MMM-TeslamateLocation](https://github.com/donker/MMM-TeslamateLocation) (`teslamate` is an alias) |
@@ -254,6 +254,8 @@ Oil life is never shown. Charge target (`tcl` from EV metrics) occupies that slo
 ### Map tiles
 
 The default map is **OpenStreetMap** with a CSS invert so it stays dark on the mirror. That is the same tile URL [MMM-TeslamateLocation](https://github.com/donker/MMM-TeslamateLocation) uses (`https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png`); TeslamateLocation leaves the tiles light.
+
+If you hide this module on a rolling scene with [MMM-Scenes2](https://github.com/MMRIZE/MMM-Scenes2), the map stays alive while it is off-screen and redraws when the scene brings it back. MagicMirror’s hide path uses `display: none`, which makes Leaflet think the container is 0×0; the module listens for `resume`, `SCENES_CHANGED`, and container resizes so tiles and the marker catch up after the fade-in (default 1s). Polling continues in the helper while the module is hidden, so location is current when it reappears.
 
 Match TeslamateLocation’s light street map:
 
