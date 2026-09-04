@@ -340,15 +340,23 @@ Each cycle, per VIN:
 3. `location()` — fallback coordinates from the digital twin
 4. `getVehicleDetails()` — make/model/year/nickname/image when available
 
-Tire pressures come from `diagnostics()`, not from the EV metrics call. A 429 on `refreshEVChargingMetrics` leaves the last good tires on screen; the helper still retries diagnostics on the normal `refreshInterval`.
+Tire pressures come from `diagnostics()`, not from the EV metrics call. A 429 on any call honors `Retry-After` (or backs off to 2× `refreshInterval` if the header is missing) and delays the next poll. The module shows **Next refresh** under **Updated** while that wait is in effect.
 
 Connected Access plans often 403 diagnostics; EV metrics still populate SOC, range, and charge target.
 
 Each poll writes a line to the MagicMirror log, for example:
 
 ```
-[MMM-GeneralMotorsEV] Sierra EV poll done in 4120ms diag=ok ev=ok loc=ok details=ok soc=72 tires=42/42/40/40 evCall=getEVChargingMetrics
-[MMM-GeneralMotorsEV] Sierra EV next poll in 15m
+[MMM-GeneralMotorsEV] MMM-GeneralMotorsEV [module_28_MMM-GeneralMotorsEV] Sierra EV poll done in 4120ms diag=ok ev=ok loc=ok details=ok soc=72 tires=42/42/40/40 psi stale=false vin=... id=module_28_MMM-GeneralMotorsEV evCall=getEVChargingMetrics nextPoll=15m
+[MMM-GeneralMotorsEV] MMM-GeneralMotorsEV [module_28_MMM-GeneralMotorsEV] Sierra EV next poll in 15m
+```
+
+A 429 includes Retry-After and the delayed next poll:
+
+```
+[MMM-GeneralMotorsEV] MMM-GeneralMotorsEV [module_28_MMM-GeneralMotorsEV] Colossus poll done in 8120ms diag=ok ev=fail:Request Failed with status 429 - Too Many Requests loc=ok details=ok soc=61.4 ... nextPoll=15m throttle=status=429 retry-after=180 wait=3m
+[MMM-GeneralMotorsEV] MMM-GeneralMotorsEV [module_28_MMM-GeneralMotorsEV] Colossus throttle status=429 retry-after=180 wait=3m next-poll=15m (refresh 15m)
+[MMM-GeneralMotorsEV] MMM-GeneralMotorsEV [module_28_MMM-GeneralMotorsEV] Colossus next poll in 15m
 ```
 
 If `forceRefreshEV` is `false` (the default), `getEVChargingMetrics` returns GM’s last cached EV packet. The poll still runs; SOC and plug state may stay the same until the vehicle next reports. Set `forceRefreshEV: true` and `forceRefreshEVInterval: 3600` to wake the vehicle about once an hour while still polling diagnostics every `refreshInterval`. Do not force-refresh faster than about every 5 minutes.

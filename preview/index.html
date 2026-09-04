@@ -5,7 +5,7 @@
   <title>MMM-GeneralMotorsEV preview</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="../MMM-GeneralMotorsEV.css?v=22" />
+  <link rel="stylesheet" href="../MMM-GeneralMotorsEV.css?v=23" />
   <style>
     html, body {
       margin: 0;
@@ -82,7 +82,12 @@
       longitude: -83.0677,
       outsideTempC: 18,
       scheduledChargeStart: "23:00",
-      lastUpdated: new Date().toISOString()
+      lastUpdated: "2026-09-04T08:25:00-07:00",
+      lastAttemptAt: "2026-09-04T08:40:00-07:00",
+      stale: true,
+      rateLimited: true,
+      retryAfter: "180",
+      nextRefreshAt: "2026-09-04T08:55:00-07:00"
     };
 
     function renderModule(el, v, opts) {
@@ -151,7 +156,12 @@
       const updatedAt = v.lastAttemptAt || v.lastUpdated;
       const failed = Boolean(v.stale);
       const time = new Date(updatedAt).toLocaleTimeString("en-US", {hour:"numeric", minute:"2-digit", hour12:true});
-      rows.push(["mdi-update", "Updated", failed ? `Failed ${time}` : time, failed]);
+      let updated = failed ? `Failed ${time}` : time;
+      if (v.rateLimited && v.nextRefreshAt) {
+        const next = new Date(v.nextRefreshAt).toLocaleTimeString("en-US", {hour:"numeric", minute:"2-digit", hour12:true});
+        updated += ` · next ${next}`;
+      }
+      rows.push(["mdi-update", "Updated", updated, failed]);
       const ul = document.createElement("ul");
       ul.className = "gmv-metrics";
       const mo = opts.metricOptions || {};
@@ -209,17 +219,27 @@
       return wrap;
     }
 
-    renderModule(document.getElementById("sierra"), sierra, {
-      image: "../images/cars/gmc-sierra-ev-denali-thunderstorm-gray.png",
-      opacity: 0.9,
-      mapStyle: "dark"
-    });
-    renderModule(document.getElementById("bolt"), bolt, {
-      image: "../images/cars/chevrolet-bolt-2017-blue.png",
-      opacity: 0.9,
-      mapStyle: "light",
-      rangeDisplay: "range"
-    });
+    const params = new URLSearchParams(location.search);
+    const shot = params.get("shot");
+    if (shot !== "bolt") {
+      renderModule(document.getElementById("sierra"), sierra, {
+        image: "../images/cars/gmc-sierra-ev-denali-thunderstorm-gray.png",
+        opacity: 0.9,
+        mapStyle: "dark"
+      });
+    } else {
+      document.getElementById("sierra").style.display = "none";
+    }
+    if (shot !== "sierra") {
+      renderModule(document.getElementById("bolt"), bolt, {
+        image: "../images/cars/chevrolet-bolt-2017-blue.png",
+        opacity: 0.9,
+        mapStyle: "light",
+        rangeDisplay: "range"
+      });
+    } else {
+      document.getElementById("bolt").style.display = "none";
+    }
   </script>
 </body>
 </html>

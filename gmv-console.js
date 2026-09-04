@@ -12,7 +12,7 @@ function isOnStarConsoleStack(stack) {
   return /[/\\]onstarjs2[/\\]/.test(String(stack || ""));
 }
 
-function apply() {
+function apply(getPrefix) {
   if (console.error && console.error.__gmvTagged) {
     return;
   }
@@ -26,7 +26,12 @@ function apply() {
   };
 
   function emit(method, args) {
-    orig[method](...args);
+    const prefix = typeof getPrefix === "function" ? getPrefix() : "";
+    if (prefix) {
+      orig[method](prefix, ...args);
+    } else {
+      orig[method](...args);
+    }
   }
 
   const install = eval(

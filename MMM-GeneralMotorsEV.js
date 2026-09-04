@@ -255,7 +255,8 @@ Module.register("MMM-GeneralMotorsEV", {
 
   buildBatteryBar(v) {
     const raw = Number(v.batteryLevel);
-    const level = Number.isFinite(raw) ? Math.max(0, Math.min(100, raw)) : 0;
+    const valid = v.batteryLevel !== null && v.batteryLevel !== undefined && v.batteryLevel !== "" && Number.isFinite(raw) && raw >= 0 && raw <= 100;
+    const level = valid ? raw : 0;
     const target = v.chargeTarget !== null && v.chargeTarget !== undefined ? Math.max(0, Math.min(100, Number(v.chargeTarget))) : null;
     const batWidth = this.config.sizeOptions?.batWidth || 250;
     const batHeight = this.config.sizeOptions?.batHeight || 45;
@@ -298,7 +299,7 @@ Module.register("MMM-GeneralMotorsEV", {
     }
     const num = document.createElement("span");
     num.className = "gmv-battery-soc-number";
-    num.textContent = v.batteryLevel === null || v.batteryLevel === undefined ? "--" : String(Math.round(level));
+    num.textContent = valid ? String(Math.round(level)) : "--";
     const unit = document.createElement("span");
     unit.className = "gmv-battery-soc-unit";
     unit.textContent = "%";
@@ -363,13 +364,16 @@ Module.register("MMM-GeneralMotorsEV", {
       if (!Number.isNaN(when.getTime())) {
         const failed = Boolean(v.stale || this.meta?.stale || v.fetchErrors?.evMetrics || v.fetchErrors?.diagnostics);
         const time = this.formatClock(when);
-        const label = failed ? `Failed ${time}` : time;
-        this.addMetric(list, "mdi-update", "Updated", label, {
-          stale: failed,
-          title: failed
-            ? `Refresh failed at ${time}. Showing last good data${v.lastUpdated ? ` from ${this.formatClock(new Date(v.lastUpdated))}` : ""}.`
-            : undefined
-        });
+        let label = failed ? `Failed ${time}` : time;
+        if (this.shouldShowNextRefresh(v)) {
+          label += ` · next ${this.formatClock(new Date(v.nextRefreshAt))}`;
+        }
+        const title = failed
+          ? `Refresh failed at ${time}. Showing last good data${v.lastUpdated ? ` from ${this.formatClock(new Date(v.lastUpdated))}` : ""}.${
+              this.shouldShowNextRefresh(v) ? ` Next poll at ${this.formatClock(new Date(v.nextRefreshAt))}.` : ""
+            }`
+          : undefined;
+        this.addMetric(list, "mdi-update", "Updated", label, { stale: failed, title });
       }
     }
 
@@ -384,6 +388,14 @@ Module.register("MMM-GeneralMotorsEV", {
     }
     li.innerHTML = `<span class="icon mdi ${icon}"></span><span class="name">${this.escape(name)}</span><span class="value">${this.escape(value)}</span>`;
     list.appendChild(li);
+  },
+
+  shouldShowNextRefresh(v) {
+    if (!v || !v.rateLimited || !v.nextRefreshAt) {
+      return false;
+    }
+    const when = new Date(v.nextRefreshAt);
+    return !Number.isNaN(when.getTime()) && when.getTime() > Date.now() - 5000;
   },
 
   shouldShowGraphicHeader() {
@@ -609,8 +621,9 @@ Module.register("MMM-GeneralMotorsEV", {
       }
       return "--";
     }
-    if (v.batteryLevel !== null && v.batteryLevel !== undefined) {
-      return Math.round(v.batteryLevel);
+    const soc = Number(v.batteryLevel);
+    if (v.batteryLevel !== null && v.batteryLevel !== undefined && v.batteryLevel !== "" && Number.isFinite(soc) && soc >= 0 && soc <= 100) {
+      return Math.round(soc);
     }
     return "--";
   },

@@ -10,6 +10,7 @@ try {
 }
 const { CredentialStore } = require("./lib/credential-store");
 const { apply: patchOnStarFs, cleanupBrowserProfile } = require("./lib/onstar-fs-patch");
+const { apply: patchAxios429 } = require("./lib/axios-429-patch");
 const { apply: tagOnStarConsole } = require("./gmv-console");
 const parser = require("./lib/gm-parser");
 const { demoForVin } = require("./lib/demo-data");
@@ -33,7 +34,9 @@ function loadOnStar() {
 module.exports = NodeHelper.create({
   requiresVersion: "2.1.0",
   start() {
-    tagOnStarConsole();
+    this.activeLogLabel = null;
+    tagOnStarConsole(() => this.activeLogLabel);
+    patchAxios429();
     patchOnStarFs();
     cleanupBrowserProfile();
     this.instances = new Map();
@@ -94,7 +97,9 @@ module.exports = NodeHelper.create({
 
   label(instance) {
     const config = instance?.config || {};
-    return `${this.name}: ${config.displayName || config.vin || config.identifier || "?"}`;
+    const id = instance?.identifier || config.identifier || "?";
+    const name = config.displayName || config.vin || "";
+    return name ? `${this.name} [${id}] ${name}` : `${this.name} [${id}]`;
   },
 
   logInfo(message) {
@@ -203,6 +208,7 @@ module.exports = NodeHelper.create({
       return;
     }
     instance.polling = true;
+    this.activeLogLabel = this.label(instance);
     const started = Date.now();
     let delay = instance.refreshMs;
     const reason = options?.reason || "poll";
@@ -253,10 +259,13 @@ module.exports = NodeHelper.create({
       });
 
       const previous = instance.lastVehicle || snapshot || null;
-      const vehicle = parser.keepPreviousValues(previous, fresh);
+      let vehicle = parser.keepPreviousValues(previous, fresh);
       const evFailed = evMetrics.status === "rejected";
       const diagFailed = diagnostics.status === "rejected";
       const attemptedAt = new Date().toISOString();
+      if (evFailed && parser.isValidSoc(previous?.batteryLevel)) {
+        vehicle.batteryLevel = previous.batteryLevel;
+      }
 
       vehicle.vin = config.vin;
       vehicle.displayName = config.displayName || vehicle.displayName || config.vin;
@@ -271,22 +280,24 @@ module.exports = NodeHelper.create({
         vehicle.lastUpdated = previous?.lastUpdated || vehicle.lastUpdated;
       }
 
+      const throttle = throttleFromSettled([diagnostics, evMetrics, location, details]);
+      delay = this.scheduleAfterPoll(instance, { forceEV, evFailed, throttle });
+      this.applyThrottleToVehicle(vehicle, throttle, delay);
+
       this.store.saveSnapshot(config.vin, vehicle);
       instance.lastVehicle = vehicle;
       instance.sentSnapshot = true;
       this.sendVehicle(config.identifier, vehicle, { cached: false, stale: vehicle.stale });
-      const evThrottle = evFailed ? extractThrottle(evMetrics.reason) : null;
-      const otherThrottle = throttleFromSettled([diagnostics, location, details]);
-      delay = this.scheduleAfterPoll(instance, { forceEV, evFailed, evThrottle, otherThrottle });
       const tires = vehicle.tires || {};
       this.logInfo(
         `${this.label(instance)} poll done in ${Date.now() - started}ms ` +
           `diag=${settledLabel(diagnostics)} ev=${settledLabel(evMetrics)} loc=${settledLabel(location)} ` +
           `details=${settledLabel(details)} soc=${vehicle.batteryLevel} rangeKm=${vehicle.rangeKm} ` +
           `tires=${tireLog(tires.fl)}/${tireLog(tires.fr)}/${tireLog(tires.rl)}/${tireLog(tires.rr)}${tires.unit ? ` ${tires.unit}` : ""} ` +
-          `stale=${vehicle.stale} vin=${config.vin} id=${config.identifier} evCall=${evCall}`
+          `stale=${vehicle.stale} vin=${config.vin} id=${config.identifier} evCall=${evCall} ` +
+          `nextPoll=${formatDuration(delay)}${throttle ? ` throttle=${formatThrottle(throttle)}` : ""}`
       );
-      this.logThrottle(instance, evThrottle || otherThrottle, delay);
+      this.logThrottle(instance, throttle, delay);
     } catch (err) {
       this.logError(`${this.label(instance)} poll error after ${Date.now() - started}ms: ${err.message || err}`);
       const throttle = extractThrottle(err);
@@ -296,6 +307,7 @@ module.exports = NodeHelper.create({
       if (snapshot) {
         snapshot.stale = true;
         snapshot.lastAttemptAt = new Date().toISOString();
+        this.applyThrottleToVehicle(snapshot, throttle, delay);
         instance.lastVehicle = snapshot;
       }
       this.sendSocketNotification("GMV_ERROR", {
@@ -308,6 +320,7 @@ module.exports = NodeHelper.create({
     } finally {
       instance.nextDelayMs = delay;
       instance.polling = false;
+      this.activeLogLabel = null;
     }
   },
 
@@ -325,18 +338,16 @@ module.exports = NodeHelper.create({
     return shouldForceRefreshEV(true, instance.lastForceRefreshAt, instance.forceRefreshMs, now);
   },
 
-  scheduleAfterPoll(instance, { forceEV, evFailed, evThrottle, otherThrottle }) {
+  scheduleAfterPoll(instance, { forceEV, evFailed, throttle }) {
     const now = Date.now();
     if (forceEV) {
       instance.lastForceRefreshAt = now;
-      const wait = evFailed && evThrottle?.waitMs ? evThrottle.waitMs : 0;
+      const wait = evFailed && throttle?.waitMs ? throttle.waitMs : 0;
       instance.nextForceRefreshAt = now + Math.max(instance.forceRefreshMs || instance.refreshMs, wait);
       this.logInfo(
         `${this.label(instance)} next forceRefreshEV in ${formatDuration(instance.nextForceRefreshAt - now)}`
       );
-      return nextDelayMs(instance.refreshMs, otherThrottle);
     }
-    const throttle = otherThrottle || evThrottle;
     return nextDelayMs(instance.refreshMs, throttle);
   },
 
@@ -365,18 +376,33 @@ module.exports = NodeHelper.create({
       requestPollingTimeoutSeconds: config.requestPollingTimeoutSeconds || 90
     });
     this.clients.set(key, client);
-    this.logInfo(`${this.name}: OnStar client created for ${config.vin}; tokens cached in ${tokenLocation}`);
+    this.logInfo(`${this.name} [${config.identifier || "?"}] OnStar client created for ${config.vin}; tokens cached in ${tokenLocation}`);
     return client;
+  },
+
+  applyThrottleToVehicle(vehicle, throttle, delay) {
+    if (!vehicle) {
+      return;
+    }
+    const limited = Boolean(throttle && (Number(throttle.status) === 429 || Number(throttle.waitMs) > 0));
+    vehicle.rateLimited = limited;
+    vehicle.retryAfter = limited ? throttle.retryAfter ?? null : null;
+    vehicle.nextRefreshAt = limited && Number.isFinite(delay) && delay > 0
+      ? new Date(Date.now() + delay).toISOString()
+      : null;
   },
 
   logThrottle(instance, throttle, delay) {
     if (!throttle) {
       return;
     }
-    const extended = Number.isFinite(delay) && delay > instance.refreshMs
-      ? `; delaying next poll to ${formatDuration(delay)} (refresh is ${formatDuration(instance.refreshMs)})`
+    const next = Number.isFinite(delay) ? ` next-poll=${formatDuration(delay)}` : "";
+    const refresh = Number.isFinite(instance.refreshMs)
+      ? delay > instance.refreshMs
+        ? ` (extended from refresh ${formatDuration(instance.refreshMs)})`
+        : ` (refresh ${formatDuration(instance.refreshMs)})`
       : "";
-    this.logInfo(`${this.label(instance)} throttle ${formatThrottle(throttle)}${extended}`);
+    this.logInfo(`${this.label(instance)} throttle ${formatThrottle(throttle)}${next}${refresh}`);
   },
 
   sendVehicle(identifier, vehicle, meta) {
