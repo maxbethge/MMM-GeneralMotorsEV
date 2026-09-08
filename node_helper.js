@@ -402,7 +402,22 @@ module.exports = NodeHelper.create({
         ? ` (extended from refresh ${formatDuration(instance.refreshMs)})`
         : ` (refresh ${formatDuration(instance.refreshMs)})`
       : "";
-    this.logInfo(`${this.label(instance)} throttle ${formatThrottle(throttle)}${next}${refresh}`);
+    let extra = "";
+    const noRetryAfter = Number(throttle.status) === 429 && (throttle.retryAfter == null || throttle.retryAfter === "");
+    if (noRetryAfter) {
+      const captured = throttle.rateLimitHeaders && Object.keys(throttle.rateLimitHeaders).length
+        ? Object.entries(throttle.rateLimitHeaders).map(([k, v]) => `${k}=${v}`).join(",")
+        : "";
+      const names = Array.isArray(throttle.headerNames) ? throttle.headerNames.join(",") : "";
+      if (captured) {
+        extra += ` rate-headers=${captured}`;
+      } else if (names) {
+        extra += ` 429-headers=${names}`;
+      } else {
+        extra += " 429-headers=(none captured)";
+      }
+    }
+    this.logInfo(`${this.label(instance)} throttle ${formatThrottle(throttle)}${next}${refresh}${extra}`);
   },
 
   sendVehicle(identifier, vehicle, meta) {

@@ -361,6 +361,8 @@ A 429 includes Retry-After and the delayed next poll:
 [MMM-GeneralMotorsEV] MMM-GeneralMotorsEV [module_28_MMM-GeneralMotorsEV] Colossus next poll in 15m
 ```
 
+GM often omits `Retry-After`. That logs as `retry-after=none` and the next poll waits **2×** `refreshInterval`. The throttle line then lists either other rate-limit headers (`rate-headers=…`) or every header name GM sent (`429-headers=…`) so you can see whether a wait value was present under another name.
+
 If `forceRefreshEV` is `false` (the default), `getEVChargingMetrics` returns GM’s last cached EV packet. The poll still runs; SOC and plug state may stay the same until the vehicle next reports. Set `forceRefreshEV: true` and `forceRefreshEVInterval: 3600` to wake the vehicle about once an hour while still polling diagnostics every `refreshInterval`. Do not force-refresh faster than about every 5 minutes.
 
 ## Disclaimer
