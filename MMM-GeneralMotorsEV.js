@@ -12,6 +12,7 @@ Module.register("MMM-GeneralMotorsEV", {
     refreshInterval: 900,
     forceRefreshEV: false,
     forceRefreshEVInterval: null,
+    asleepRefreshInterval: null,
     timeFormat: 12,
     imperial: true,
     rangeDisplay: "%",
@@ -113,6 +114,7 @@ Module.register("MMM-GeneralMotorsEV", {
       refreshInterval: this.config.refreshInterval,
       forceRefreshEV: this.config.forceRefreshEV,
       forceRefreshEVInterval: this.config.forceRefreshEVInterval,
+      asleepRefreshInterval: this.config.asleepRefreshInterval,
       checkRequestStatus: this.config.checkRequestStatus,
       requestPollingIntervalSeconds: this.config.requestPollingIntervalSeconds,
       requestPollingTimeoutSeconds: this.config.requestPollingTimeoutSeconds

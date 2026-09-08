@@ -16,6 +16,8 @@ const parser = require("./lib/gm-parser");
 const { demoForVin } = require("./lib/demo-data");
 const { refreshIntervalMs, formatDuration, settledLabel, shouldForceRefreshEV } = require("./lib/refresh-interval");
 const { extractThrottle, throttleFromSettled, nextDelayMs, formatThrottle } = require("./lib/throttle");
+const { fetchWithBackoff, is429Error, sleep, withJitter } = require("./lib/backoff");
+const { planPoll, pollDelayMs, isVehicleAsleep } = require("./lib/poll-plan");
 
 function tireLog(value) {
   const n = Number(value);
@@ -158,6 +160,10 @@ module.exports = NodeHelper.create({
       forceRefreshMs,
       lastForceRefreshAt: existing?.lastForceRefreshAt || null,
       nextForceRefreshAt: existing?.nextForceRefreshAt || null,
+      lastDiagnosticsAt: existing?.lastDiagnosticsAt || null,
+      lastDetailsAt: existing?.lastDetailsAt || null,
+      lastLocationAt: existing?.lastLocationAt || null,
+      lastVehicle: existing?.lastVehicle || null,
       polling: false,
       timer: null,
       generation: (existing?.generation || 0) + 1,
@@ -239,29 +245,38 @@ module.exports = NodeHelper.create({
         this.logInfo(`${this.label(instance)} painted cached snapshot while fetching live data`);
       }
 
+      const previous = instance.lastVehicle || snapshot || null;
       const client = this.getClient(resolved);
-      const forceEV = this.wantsForceRefresh(instance, options);
-      const evCall = forceEV ? "refreshEVChargingMetrics" : "getEVChargingMetrics";
-      this.logInfo(`${this.label(instance)} calling diagnostics, ${evCall}, location, getVehicleDetails`);
-      const [diagnostics, evMetrics, location, details] = await Promise.allSettled([
-        client.diagnostics(),
-        forceEV ? client.refreshEVChargingMetrics() : client.getEVChargingMetrics(),
-        client.location(),
-        client.getVehicleDetails(config.vin)
-      ]);
+      const forceEVWanted = this.wantsForceRefresh(instance, options);
+      const plan = planPoll({
+        vehicle: previous,
+        refreshMs: instance.refreshMs,
+        forceEV: forceEVWanted,
+        lastDiagnosticsAt: instance.lastDiagnosticsAt,
+        lastDetailsAt: instance.lastDetailsAt,
+        lastLocationAt: instance.lastLocationAt,
+        manual: reason === "manual"
+      });
+      const evCall = plan.forceEV ? "refreshEVChargingMetrics" : "getEVChargingMetrics";
+      this.logInfo(
+        `${this.label(instance)} poll plan asleep=${plan.asleep} ` +
+          `calls=${["ev", plan.diagnostics && "diagnostics", plan.location && "location", plan.details && "details"].filter(Boolean).join(",")} ` +
+          `skip=${plan.skips.join(",") || "none"} evCall=${evCall}`
+      );
+
+      const [diagnostics, evMetrics, location, details] = await this.pollEndpoints(instance, client, plan);
 
       const fresh = parser.parseAll({
-        diagnostics: diagnostics.status === "fulfilled" ? diagnostics.value : null,
-        evMetrics: evMetrics.status === "fulfilled" ? evMetrics.value : null,
-        location: location.status === "fulfilled" ? location.value : null,
-        vehicleDetails: details.status === "fulfilled" ? details.value : null,
+        diagnostics: diagnostics?.status === "fulfilled" ? diagnostics.value : null,
+        evMetrics: evMetrics?.status === "fulfilled" ? evMetrics.value : null,
+        location: location?.status === "fulfilled" ? location.value : null,
+        vehicleDetails: details?.status === "fulfilled" ? details.value : null,
         vin: config.vin
       });
 
-      const previous = instance.lastVehicle || snapshot || null;
       let vehicle = parser.keepPreviousValues(previous, fresh);
-      const evFailed = evMetrics.status === "rejected";
-      const diagFailed = diagnostics.status === "rejected";
+      const evFailed = evMetrics?.status === "rejected";
+      const diagFailed = diagnostics?.status === "rejected";
       const attemptedAt = new Date().toISOString();
       if (evFailed && parser.isValidSoc(previous?.batteryLevel)) {
         vehicle.batteryLevel = previous.batteryLevel;
@@ -272,7 +287,7 @@ module.exports = NodeHelper.create({
       vehicle.fetchErrors = {
         diagnostics: diagFailed ? String(diagnostics.reason?.message || diagnostics.reason) : null,
         evMetrics: evFailed ? String(evMetrics.reason?.message || evMetrics.reason) : null,
-        location: location.status === "rejected" ? String(location.reason?.message || location.reason) : null
+        location: location?.status === "rejected" ? String(location.reason?.message || location.reason) : null
       };
       vehicle.lastAttemptAt = attemptedAt;
       vehicle.stale = evFailed || diagFailed;
@@ -281,7 +296,12 @@ module.exports = NodeHelper.create({
       }
 
       const throttle = throttleFromSettled([diagnostics, evMetrics, location, details]);
-      delay = this.scheduleAfterPoll(instance, { forceEV, evFailed, throttle });
+      delay = this.scheduleAfterPoll(instance, {
+        forceEV: plan.forceEV,
+        evFailed,
+        throttle,
+        asleep: plan.asleep
+      });
       this.applyThrottleToVehicle(vehicle, throttle, delay);
 
       this.store.saveSnapshot(config.vin, vehicle);
@@ -294,14 +314,19 @@ module.exports = NodeHelper.create({
           `diag=${settledLabel(diagnostics)} ev=${settledLabel(evMetrics)} loc=${settledLabel(location)} ` +
           `details=${settledLabel(details)} soc=${vehicle.batteryLevel} rangeKm=${vehicle.rangeKm} ` +
           `tires=${tireLog(tires.fl)}/${tireLog(tires.fr)}/${tireLog(tires.rl)}/${tireLog(tires.rr)}${tires.unit ? ` ${tires.unit}` : ""} ` +
-          `stale=${vehicle.stale} vin=${config.vin} id=${config.identifier} evCall=${evCall} ` +
+          `stale=${vehicle.stale} asleep=${plan.asleep} vin=${config.vin} id=${config.identifier} evCall=${evCall} ` +
           `nextPoll=${formatDuration(delay)}${throttle ? ` throttle=${formatThrottle(throttle)}` : ""}`
       );
       this.logThrottle(instance, throttle, delay);
     } catch (err) {
       this.logError(`${this.label(instance)} poll error after ${Date.now() - started}ms: ${err.message || err}`);
       const throttle = extractThrottle(err);
-      delay = nextDelayMs(instance.refreshMs, throttle);
+      delay = this.scheduleAfterPoll(instance, {
+        forceEV: false,
+        evFailed: true,
+        throttle,
+        asleep: isVehicleAsleep(instance.lastVehicle)
+      });
       this.logThrottle(instance, throttle, delay);
       const snapshot = instance.lastVehicle || (config.vin ? this.store.loadSnapshot(config.vin) : null);
       if (snapshot) {
@@ -338,7 +363,7 @@ module.exports = NodeHelper.create({
     return shouldForceRefreshEV(true, instance.lastForceRefreshAt, instance.forceRefreshMs, now);
   },
 
-  scheduleAfterPoll(instance, { forceEV, evFailed, throttle }) {
+  scheduleAfterPoll(instance, { forceEV, evFailed, throttle, asleep }) {
     const now = Date.now();
     if (forceEV) {
       instance.lastForceRefreshAt = now;
@@ -348,7 +373,84 @@ module.exports = NodeHelper.create({
         `${this.label(instance)} next forceRefreshEV in ${formatDuration(instance.nextForceRefreshAt - now)}`
       );
     }
-    return nextDelayMs(instance.refreshMs, throttle);
+    const scheduled = pollDelayMs({
+      refreshMs: instance.refreshMs,
+      asleepRefresh: instance.config.asleepRefreshInterval,
+      asleep,
+      throttle,
+      nextDelayMs
+    });
+    const floor = Number(throttle?.waitMs);
+    const jittered = withJitter(scheduled, 0.1);
+    return Number.isFinite(floor) && floor > 0 ? Math.max(floor, jittered) : jittered;
+  },
+
+  async pollEndpoints(instance, client, plan) {
+    const results = { diagnostics: null, ev: null, location: null, details: null };
+    let aborted = null;
+    const run = async (name, fn, backoff) => {
+      if (aborted) {
+        this.logInfo(`${this.label(instance)} skip ${name} after 429 on ${aborted}`);
+        return null;
+      }
+      try {
+        const value = await fetchWithBackoff(fn, backoff);
+        return { status: "fulfilled", value };
+      } catch (reason) {
+        if (is429Error(reason)) {
+          aborted = name;
+          this.logInfo(`${this.label(instance)} 429 on ${name}; serving cached values for remaining calls`);
+        }
+        return { status: "rejected", reason };
+      }
+    };
+    const pause = async () => {
+      if (!aborted) {
+        await sleep(withJitter(1000, 0.4));
+      }
+    };
+
+    if (plan.ev) {
+      results.ev = await run(
+        "ev",
+        () => (plan.forceEV ? client.refreshEVChargingMetrics() : client.getEVChargingMetrics()),
+        { retries: 3, delay: 2000, maxDelay: 20000 }
+      );
+    }
+    if (plan.diagnostics) {
+      await pause();
+      results.diagnostics = await run("diagnostics", () => client.diagnostics(), {
+        retries: 0,
+        delay: 2000,
+        maxDelay: 20000
+      });
+      if (results.diagnostics?.status === "fulfilled") {
+        instance.lastDiagnosticsAt = Date.now();
+      }
+    }
+    if (plan.location) {
+      await pause();
+      results.location = await run("location", () => client.location(), {
+        retries: 0,
+        delay: 2000,
+        maxDelay: 20000
+      });
+      if (results.location?.status === "fulfilled") {
+        instance.lastLocationAt = Date.now();
+      }
+    }
+    if (plan.details) {
+      await pause();
+      results.details = await run("details", () => client.getVehicleDetails(instance.config.vin), {
+        retries: 3,
+        delay: 2000,
+        maxDelay: 20000
+      });
+      if (results.details?.status === "fulfilled") {
+        instance.lastDetailsAt = Date.now();
+      }
+    }
+    return [results.diagnostics, results.ev, results.location, results.details];
   },
 
   getClient(config) {
@@ -373,7 +475,13 @@ module.exports = NodeHelper.create({
       tokenLocation,
       checkRequestStatus: config.checkRequestStatus !== false,
       requestPollingIntervalSeconds: config.requestPollingIntervalSeconds || 6,
-      requestPollingTimeoutSeconds: config.requestPollingTimeoutSeconds || 90
+      requestPollingTimeoutSeconds: config.requestPollingTimeoutSeconds || 90,
+      max429Retries: 2,
+      retryOn429ForPost: false,
+      initial429DelayMs: 2000,
+      backoffFactor: 2,
+      jitterMs: 400,
+      max429DelayMs: 20000
     });
     this.clients.set(key, client);
     this.logInfo(`${this.name} [${config.identifier || "?"}] OnStar client created for ${config.vin}; tokens cached in ${tokenLocation}`);

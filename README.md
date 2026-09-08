@@ -123,8 +123,9 @@ MagicMirror sends `config.js` to the browser, so prefer environment variables fo
 | `metricOptions.spacing` | `0` | Extra gap between metric rows |
 | `metricOptions.valueSpacing` | `12` | Space between the label and the value |
 | `refreshInterval` | `900` | Time between API polls. Numbers below `60000` are **seconds** (`900` = 15 min). `60000` or more is treated as milliseconds. Minimum 60s. Each poll is logged as `[MMM-GeneralMotorsEV] … poll done … next in …` |
-| `forceRefreshEV` | `false` | `false` reads GM’s cached EV metrics. `true` wakes the vehicle for live SOC, but only as often as `forceRefreshEVInterval` |
+| `forceRefreshEV` | `false` | `false` reads GM’s cached EV metrics. `true` wakes the vehicle for live SOC, but only as often as `forceRefreshEVInterval`, and **not while the vehicle is asleep** (ignition off, unplugged) |
 | `forceRefreshEVInterval` | same as `refreshInterval` | How often to call `refreshEVChargingMetrics` when `forceRefreshEV` is `true`. Same number rules as `refreshInterval`. Other polls (`diagnostics`, cached EV get, location) still use `refreshInterval` |
+| `asleepRefreshInterval` | 2× `refreshInterval` (min 30 min) | Poll cadence while parked and unplugged. Same number rules as `refreshInterval` |
 | `timeFormat` | `12` | `12` shows `1:07 PM`. `24` shows `13:07`. Independent of the Pi’s locale |
 | `imperial` | `true` | Miles, °F, psi. `false` uses km, °C, kPa |
 | `rangeDisplay` | `"%"` | `"%"` or `"range"` for the large number |
@@ -335,14 +336,16 @@ A standalone HTML preview (same CSS and car images) is at `preview/index.html`.
 
 ## What is polled
 
-Each cycle, per VIN:
+Each cycle, per VIN, calls run **one after another** (not in parallel) with a short jittered pause between them. A 429 aborts the rest of that cycle and the last successful snapshot stays on the mirror.
 
-1. `diagnostics()` — odometer, 12V, **tire pressures**, EV battery/range when the plan allows it
-2. `getEVChargingMetrics()` — SOC, charge target (`tcl`), plug/charge state, GPS, ETA
-3. `location()` — fallback coordinates from the digital twin
-4. `getVehicleDetails()` — make/model/year/nickname/image when available
+1. `getEVChargingMetrics()` — SOC, charge target (`tcl`), plug/charge state, GPS, ETA. Uses `refreshEVChargingMetrics()` only when `forceRefreshEV` is on **and** the vehicle is not asleep
+2. `diagnostics()` — odometer, 12V, **tire pressures**. Skipped while parked/unplugged if the last diagnostics pull is still fresh (at least 30 min / 2× `refreshInterval`)
+3. `location()` — fallback coordinates. Skipped when EV metrics (or the snapshot) already have GPS; the live ping sends SMS and can wake a sleeping module
+4. `getVehicleDetails()` — make/model/year/nickname/image. Cached for 24 hours after the first success
 
-Tire pressures come from `diagnostics()`, not from the EV metrics call. A 429 on any call honors `Retry-After` (or backs off to 2× `refreshInterval` if the header is missing) and delays the next poll. The module shows **Next refresh** under **Updated** while that wait is in effect.
+While ignition is off and the vehicle is unplugged, the helper treats it as **asleep**: it serves cached diagnostics/location, does not force-wake for EV, and waits `asleepRefreshInterval` (default 30 min when `refreshInterval` is 15 min). Charging or ignition on returns to the normal cadence.
+
+Tire pressures come from `diagnostics()`, not from the EV metrics call. A 429 on any call retries a few times with exponential backoff and jitter (and honors `Retry-After` when it is longer than that in-loop wait). After that it delays the next poll (or backs off to 2× the current cadence if the header is missing). The module shows **Next refresh** under **Updated** while that wait is in effect.
 
 Connected Access plans often 403 diagnostics; EV metrics still populate SOC, range, and charge target.
 
@@ -363,7 +366,7 @@ A 429 includes Retry-After and the delayed next poll:
 
 GM often omits `Retry-After`. That logs as `retry-after=none` and the next poll waits **2×** `refreshInterval`. The throttle line then lists either other rate-limit headers (`rate-headers=…`) or every header name GM sent (`429-headers=…`) so you can see whether a wait value was present under another name.
 
-If `forceRefreshEV` is `false` (the default), `getEVChargingMetrics` returns GM’s last cached EV packet. The poll still runs; SOC and plug state may stay the same until the vehicle next reports. Set `forceRefreshEV: true` and `forceRefreshEVInterval: 3600` to wake the vehicle about once an hour while still polling diagnostics every `refreshInterval`. Do not force-refresh faster than about every 5 minutes.
+If `forceRefreshEV` is `false` (the default), `getEVChargingMetrics` returns GM’s last cached EV packet. The poll still runs; SOC and plug state may stay the same until the vehicle next reports. Set `forceRefreshEV: true` and `forceRefreshEVInterval: 3600` to wake the vehicle about once an hour **while it is charging, plugged in, or ignition is on**. Parked and unplugged vehicles stay on the cached EV get so hibernation does not burn quota. Do not force-refresh faster than about every 5 minutes.
 
 ## Disclaimer
 
