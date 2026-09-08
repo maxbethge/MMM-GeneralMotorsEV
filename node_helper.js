@@ -18,6 +18,7 @@ const { refreshIntervalMs, formatDuration, settledLabel, shouldForceRefreshEV } 
 const { extractThrottle, throttleFromSettled, nextDelayMs, formatThrottle } = require("./lib/throttle");
 const { fetchWithBackoff, is429Error, sleep, withJitter } = require("./lib/backoff");
 const { planPoll, pollDelayMs, isVehicleAsleep } = require("./lib/poll-plan");
+const { httpStatus, errorBodyPreview, shouldFallbackEvRefresh } = require("./lib/http-error");
 
 function tireLog(value) {
   const n = Number(value);
@@ -164,6 +165,8 @@ module.exports = NodeHelper.create({
       lastDetailsAt: existing?.lastDetailsAt || null,
       lastLocationAt: existing?.lastLocationAt || null,
       lastVehicle: existing?.lastVehicle || null,
+      forceEvUnsupported: existing?.forceEvUnsupported || false,
+      forceEvFailCount: existing?.forceEvFailCount || 0,
       polling: false,
       timer: null,
       generation: (existing?.generation || 0) + 1,
@@ -252,12 +255,13 @@ module.exports = NodeHelper.create({
         vehicle: previous,
         refreshMs: instance.refreshMs,
         forceEV: forceEVWanted,
+        forceEVUnsupported: instance.forceEvUnsupported,
         lastDiagnosticsAt: instance.lastDiagnosticsAt,
         lastDetailsAt: instance.lastDetailsAt,
         lastLocationAt: instance.lastLocationAt,
         manual: reason === "manual"
       });
-      const evCall = plan.forceEV ? "refreshEVChargingMetrics" : "getEVChargingMetrics";
+      let evCall = plan.forceEV ? "refreshEVChargingMetrics" : "getEVChargingMetrics";
       this.logInfo(
         `${this.label(instance)} poll plan asleep=${plan.asleep} ` +
           `calls=${["ev", plan.diagnostics && "diagnostics", plan.location && "location", plan.details && "details"].filter(Boolean).join(",")} ` +
@@ -265,6 +269,7 @@ module.exports = NodeHelper.create({
       );
 
       const [diagnostics, evMetrics, location, details] = await this.pollEndpoints(instance, client, plan);
+      evCall = instance.lastEvCall || evCall;
 
       const fresh = parser.parseAll({
         diagnostics: diagnostics?.status === "fulfilled" ? diagnostics.value : null,
@@ -411,11 +416,12 @@ module.exports = NodeHelper.create({
     };
 
     if (plan.ev) {
-      results.ev = await run(
-        "ev",
-        () => (plan.forceEV ? client.refreshEVChargingMetrics() : client.getEVChargingMetrics()),
-        { retries: 3, delay: 2000, maxDelay: 20000 }
-      );
+      instance.lastEvCall = plan.forceEV ? "refreshEVChargingMetrics" : "getEVChargingMetrics";
+      results.ev = await run("ev", () => this.fetchEvMetrics(instance, client, plan), {
+        retries: 3,
+        delay: 2000,
+        maxDelay: 20000
+      });
     }
     if (plan.diagnostics) {
       await pause();
@@ -451,6 +457,38 @@ module.exports = NodeHelper.create({
       }
     }
     return [results.diagnostics, results.ev, results.location, results.details];
+  },
+
+  async fetchEvMetrics(instance, client, plan) {
+    if (!plan.forceEV) {
+      return client.getEVChargingMetrics();
+    }
+    try {
+      const value = await client.refreshEVChargingMetrics();
+      instance.forceEvFailCount = 0;
+      instance.lastEvCall = "refreshEVChargingMetrics";
+      return value;
+    } catch (err) {
+      if (!shouldFallbackEvRefresh(err)) {
+        throw err;
+      }
+      const status = httpStatus(err);
+      const preview = errorBodyPreview(err);
+      instance.forceEvFailCount = (instance.forceEvFailCount || 0) + 1;
+      instance.lastEvCall = "getEVChargingMetrics(fallback)";
+      this.logInfo(
+        `${this.label(instance)} refreshEVChargingMetrics returned ${status}` +
+          `${preview ? ` body=${preview}` : ""}` +
+          `; falling back to getEVChargingMetrics (live telemetry wake is not supported on some vehicles, including Gen 1 Bolt)`
+      );
+      if (instance.forceEvFailCount >= 2) {
+        instance.forceEvUnsupported = true;
+        this.logInfo(
+          `${this.label(instance)} disabling forceRefreshEV until restart after repeated ${status} on refreshEVChargingMetrics`
+        );
+      }
+      return client.getEVChargingMetrics();
+    }
   },
 
   getClient(config) {

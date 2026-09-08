@@ -368,6 +368,8 @@ GM often omits `Retry-After`. That logs as `retry-after=none` and the next poll 
 
 If `forceRefreshEV` is `false` (the default), `getEVChargingMetrics` returns GM’s last cached EV packet. The poll still runs; SOC and plug state may stay the same until the vehicle next reports. Set `forceRefreshEV: true` and `forceRefreshEVInterval: 3600` to wake the vehicle about once an hour **while it is charging, plugged in, or ignition is on**. Parked and unplugged vehicles stay on the cached EV get so hibernation does not burn quota. Do not force-refresh faster than about every 5 minutes.
 
+Some vehicles (notably **2017–2019 Bolt EV**) reject the live wake with **HTTP 400**. The helper then uses `getEVChargingMetrics` for that poll and, after two 400s, stops calling `refreshEVChargingMetrics` until MagicMirror restarts. SOC/range stay on the last good cached packet instead of going stale.
+
 ## Disclaimer
 
 This is an unofficial integration. GM can change or block the consumer API at any time. Remote commands (lock, start, charge control) are intentionally not exposed on a wall mirror.
