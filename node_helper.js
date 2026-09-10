@@ -19,6 +19,7 @@ const { extractThrottle, throttleFromSettled, nextDelayMs, formatThrottle } = re
 const { fetchWithBackoff, is429Error, sleep, withJitter } = require("./lib/backoff");
 const { planPoll, pollDelayMs, isVehicleAsleep, hasCoordinates } = require("./lib/poll-plan");
 const { httpStatus, errorBodyPreview, shouldFallbackEvRefresh } = require("./lib/http-error");
+const apiTrace = require("./lib/api-trace");
 
 function tireLog(value) {
   const n = Number(value);
@@ -131,7 +132,8 @@ module.exports = NodeHelper.create({
       existing.refreshMs === refreshMs &&
       existing.forceRefreshMs === forceRefreshMs &&
       Boolean(existing.config.demo) === Boolean(config.demo) &&
-      Boolean(existing.config.forceRefreshEV) === Boolean(config.forceRefreshEV)
+      Boolean(existing.config.forceRefreshEV) === Boolean(config.forceRefreshEV) &&
+      Boolean(existing.config.showApiDebug) === Boolean(config.showApiDebug)
     ) {
       this.logInfo(`${this.label(existing)} already polling every ${formatDuration(refreshMs)} (refreshInterval=${config.refreshInterval})`);
       if (existing.config.demo) {
@@ -220,6 +222,7 @@ module.exports = NodeHelper.create({
     this.activeLogLabel = this.label(instance);
     const started = Date.now();
     let delay = instance.refreshMs;
+    let plan = null;
     const reason = options?.reason || "poll";
     const { config } = instance;
     const username = config.username || process.env.GM_USERNAME;
@@ -227,11 +230,15 @@ module.exports = NodeHelper.create({
     const totpSecret = config.totpSecret || config.onStarTOTP || process.env.GM_TOTP;
     const onStarPin = config.onStarPin || process.env.GM_PIN;
     const resolved = { ...config, username, password, totpSecret, onStarPin };
+    apiTrace.begin(Boolean(config.showApiDebug));
     try {
       this.logInfo(`${this.label(instance)} ${reason} poll starting`);
       if (config.demo) {
         const vehicle = demoForVin(config.vin, config.displayName);
         this.sendVehicle(config.identifier, vehicle, { demo: true });
+        if (config.showApiDebug) {
+          this.logApiCalls(instance, [apiTrace.skipped("demo", "demo mode does not call OnStar")]);
+        }
         this.logInfo(`${this.label(instance)} demo poll done in ${Date.now() - started}ms soc=${vehicle.batteryLevel}`);
         return;
       }
@@ -251,7 +258,7 @@ module.exports = NodeHelper.create({
       const previous = instance.lastVehicle || snapshot || null;
       const client = this.getClient(resolved);
       const forceEVWanted = this.wantsForceRefresh(instance, options);
-      const plan = planPoll({
+      plan = planPoll({
         vehicle: previous,
         refreshMs: instance.refreshMs,
         asleepRefresh: instance.config.asleepRefreshInterval,
@@ -316,6 +323,8 @@ module.exports = NodeHelper.create({
       this.store.saveSnapshot(config.vin, vehicle);
       instance.lastVehicle = vehicle;
       instance.sentSnapshot = true;
+      const apiCalls = config.showApiDebug ? this.finishApiTrace(plan) : [];
+      this.logApiCalls(instance, apiCalls);
       this.sendVehicle(config.identifier, vehicle, { cached: false, stale: vehicle.stale });
       const tires = vehicle.tires || {};
       this.logInfo(
@@ -344,6 +353,8 @@ module.exports = NodeHelper.create({
         this.applyThrottleToVehicle(snapshot, throttle, delay);
         instance.lastVehicle = snapshot;
       }
+      const apiCalls = config.showApiDebug ? this.finishApiTrace(plan) : [];
+      this.logApiCalls(instance, apiCalls);
       this.sendSocketNotification("GMV_ERROR", {
         identifier: config.identifier,
         vin: config.vin || snapshot?.vin || null,
@@ -355,6 +366,7 @@ module.exports = NodeHelper.create({
       instance.nextDelayMs = delay;
       instance.polling = false;
       this.activeLogLabel = null;
+      apiTrace.take();
     }
   },
 
@@ -398,6 +410,15 @@ module.exports = NodeHelper.create({
     const run = async (name, fn, backoff) => {
       if (aborted) {
         this.logInfo(`${this.label(instance)} skip ${name} after 429 on ${aborted}`);
+        const skipName =
+          name === "ev"
+            ? plan.forceEV
+              ? "refreshEVChargingMetrics"
+              : "getEVChargingMetrics"
+            : name === "details"
+              ? "getVehicleDetails"
+              : name;
+        apiTrace.recordSkipped(skipName, `after 429 on ${aborted}`);
         return null;
       }
       try {
@@ -566,6 +587,26 @@ module.exports = NodeHelper.create({
       }
     }
     this.logInfo(`${this.label(instance)} throttle ${formatThrottle(throttle)}${next}${refresh}${extra}`);
+  },
+
+  finishApiTrace(plan) {
+    const http = apiTrace.take();
+    return [...http, ...apiTrace.skippedFromPlan(plan)];
+  },
+
+  logApiCalls(instance, calls) {
+    if (!instance?.config?.showApiDebug || !Array.isArray(calls) || !calls.length) {
+      return;
+    }
+    for (const call of calls) {
+      const text = apiTrace.formatApiCallLog(call);
+      if (!text) {
+        continue;
+      }
+      for (const line of text.split("\n")) {
+        this.logInfo(`${this.label(instance)} ${line}`);
+      }
+    }
   },
 
   sendVehicle(identifier, vehicle, meta) {

@@ -126,6 +126,7 @@ MagicMirror sends `config.js` to the browser, so prefer environment variables fo
 | `forceRefreshEV` | `false` | `false` reads GM’s cached EV metrics. `true` wakes the vehicle for live SOC, but only as often as `forceRefreshEVInterval`, and **not while the vehicle is asleep** (ignition off, unplugged) |
 | `forceRefreshEVInterval` | same as `refreshInterval` | How often to call `refreshEVChargingMetrics` when `forceRefreshEV` is `true`. Same number rules as `refreshInterval`. Other polls (`diagnostics`, cached EV get, location) still use `refreshInterval` |
 | `asleepRefreshInterval` | 2× `refreshInterval` (min 30 min) | How often to run the live `location()` ping (and skip fresh diagnostics) while parked and unplugged. `getEVChargingMetrics` still uses `refreshInterval` |
+| `showApiDebug` | `false` | Log each OnStar HTTP call (status code and JSON body) to the MagicMirror log. Token-like fields are redacted and large bodies are truncated. Nothing is shown on the module or written to `cache/` snapshots |
 | `timeFormat` | `12` | `12` shows `1:07 PM`. `24` shows `13:07`. Independent of the Pi’s locale |
 | `imperial` | `true` | Miles, °F, psi. `false` uses km, °C, kPa |
 | `rangeDisplay` | `"%"` | `"%"` or `"range"` for the large number |
@@ -365,6 +366,20 @@ A 429 includes Retry-After and the delayed next poll:
 ```
 
 GM often omits `Retry-After`. That logs as `retry-after=none` and the next poll waits **2×** `refreshInterval`. The throttle line then lists either other rate-limit headers (`rate-headers=…`) or every header name GM sent (`429-headers=…`) so you can see whether a wait value was present under another name.
+
+Set `showApiDebug: true` on an instance to log each HTTP call, for example:
+
+```
+[MMM-GeneralMotorsEV] … Sierra EV api GET getEVChargingMetrics 200
+[MMM-GeneralMotorsEV] … Sierra EV {
+[MMM-GeneralMotorsEV] … Sierra EV   "success": true,
+[MMM-GeneralMotorsEV] … Sierra EV   "results": [
+[MMM-GeneralMotorsEV] … Sierra EV     { "soc": 61.4 }
+[MMM-GeneralMotorsEV] … Sierra EV   ]
+[MMM-GeneralMotorsEV] … Sierra EV }
+```
+
+Token-like fields are redacted and large bodies are truncated. Planned skips (asleep diagnostics, cached location, and so on) log as `api - location skip:location:asleep`. Restart MagicMirror after changing this flag.
 
 If `forceRefreshEV` is `false` (the default), `getEVChargingMetrics` returns GM’s last cached EV packet. The poll still runs; SOC and plug state may stay the same until the vehicle next reports. Set `forceRefreshEV: true` and `forceRefreshEVInterval: 3600` to wake the vehicle about once an hour **while it is charging, plugged in, or ignition is on**. Parked and unplugged vehicles stay on the cached EV get so hibernation does not burn quota. Do not force-refresh faster than about every 5 minutes.
 
