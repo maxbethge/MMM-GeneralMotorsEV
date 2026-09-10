@@ -47,7 +47,8 @@ Module.register("MMM-GeneralMotorsEV", {
       battery12v: { visible: true },
       tpms: { visible: true },
       batteryBar: { visible: true },
-      temperatures: { visible: true }
+      temperatures: { visible: true },
+      diagnostics: { visible: true }
     },
     showTemps: "always",
     header: false,
@@ -362,6 +363,14 @@ Module.register("MMM-GeneralMotorsEV", {
     list.className = "gmv-metrics";
     this.applyMetricStyles(list);
 
+    const diagnosticText = this.diagnosticAlertText(v);
+    if (diagnosticText) {
+      this.addMetric(list, "mdi-car-wrench", "Diagnostics", diagnosticText, {
+        alert: true,
+        color: this.statusColorToCss(v.advDiagnosticsStatusColor)
+      });
+    }
+
     if (v.charging && v.chargeEta) {
       this.addMetric(list, "mdi-clock-outline", "Time to target", this.formatEta(v.chargeEta));
     }
@@ -415,12 +424,52 @@ Module.register("MMM-GeneralMotorsEV", {
 
   addMetric(list, icon, name, value, options) {
     const li = document.createElement("li");
-    li.className = options?.stale ? "gmv-metric is-stale" : "gmv-metric";
+    const classes = ["gmv-metric"];
+    if (options?.stale) {
+      classes.push("is-stale");
+    }
+    if (options?.alert) {
+      classes.push("is-alert");
+    }
+    li.className = classes.join(" ");
     if (options?.title) {
       li.title = options.title;
     }
     li.innerHTML = `<span class="icon mdi ${icon}"></span><span class="name">${this.escape(name)}</span><span class="value">${this.escape(value)}</span>`;
+    if (options?.color) {
+      li.style.color = options.color;
+    }
     list.appendChild(li);
+  },
+
+  diagnosticAlertText(v) {
+    if (this.config.displayOptions?.diagnostics?.visible === false || !v) {
+      return null;
+    }
+    const color = String(v.advDiagnosticsStatusColor || "").trim().toUpperCase();
+    if (!color || color === "GREEN") {
+      return null;
+    }
+    const text = String(v.recommendedAction || v.advDiagnosticsStatus || "").trim();
+    return text || null;
+  },
+
+  statusColorToCss(color) {
+    const raw = String(color || "").trim();
+    if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(raw)) {
+      return raw;
+    }
+    const named = {
+      RED: "red",
+      YELLOW: "yellow",
+      ORANGE: "orange",
+      AMBER: "goldenrod",
+      GOLD: "gold",
+      GREEN: "limegreen",
+      BLUE: "dodgerblue",
+      WHITE: "white"
+    };
+    return named[raw.toUpperCase()] || null;
   },
 
   shouldShowNextRefresh(v) {

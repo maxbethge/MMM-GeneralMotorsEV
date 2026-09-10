@@ -17,7 +17,7 @@ const { demoForVin } = require("./lib/demo-data");
 const { refreshIntervalMs, formatDuration, settledLabel, shouldForceRefreshEV } = require("./lib/refresh-interval");
 const { extractThrottle, throttleFromSettled, nextDelayMs, formatThrottle } = require("./lib/throttle");
 const { fetchWithBackoff, is429Error, sleep, withJitter } = require("./lib/backoff");
-const { planPoll, pollDelayMs, isVehicleAsleep, hasCoordinates } = require("./lib/poll-plan");
+const { planPoll, pollDelayMs, isVehicleAsleep, hasCoordinates, ignitionOn } = require("./lib/poll-plan");
 const { httpStatus, errorBodyPreview, shouldFallbackEvRefresh } = require("./lib/http-error");
 const apiTrace = require("./lib/api-trace");
 
@@ -166,6 +166,7 @@ module.exports = NodeHelper.create({
       lastDiagnosticsAt: existing?.lastDiagnosticsAt || null,
       lastDetailsAt: existing?.lastDetailsAt || null,
       lastLocationAt: existing?.lastLocationAt || null,
+      last429At: existing?.last429At || null,
       lastVehicle: existing?.lastVehicle || null,
       forceEvUnsupported: existing?.forceEvUnsupported || false,
       forceEvFailCount: existing?.forceEvFailCount || 0,
@@ -267,6 +268,7 @@ module.exports = NodeHelper.create({
         lastDiagnosticsAt: instance.lastDiagnosticsAt,
         lastDetailsAt: instance.lastDetailsAt,
         lastLocationAt: instance.lastLocationAt,
+        last429At: instance.last429At,
         manual: reason === "manual"
       });
       if (!plan.location && !instance.lastLocationAt && hasCoordinates(previous)) {
@@ -312,11 +314,12 @@ module.exports = NodeHelper.create({
       }
 
       const throttle = throttleFromSettled([diagnostics, evMetrics, location, details]);
+      this.rememberAsleepLatch(instance, throttle, vehicle);
       delay = this.scheduleAfterPoll(instance, {
         forceEV: plan.forceEV,
         evFailed,
         throttle,
-        asleep: plan.asleep
+        asleep: isVehicleAsleep(vehicle, { last429At: instance.last429At })
       });
       this.applyThrottleToVehicle(vehicle, throttle, delay);
 
@@ -339,11 +342,12 @@ module.exports = NodeHelper.create({
     } catch (err) {
       this.logError(`${this.label(instance)} poll error after ${Date.now() - started}ms: ${err.message || err}`);
       const throttle = extractThrottle(err);
+      this.rememberAsleepLatch(instance, throttle, instance.lastVehicle);
       delay = this.scheduleAfterPoll(instance, {
         forceEV: false,
         evFailed: true,
         throttle,
-        asleep: isVehicleAsleep(instance.lastVehicle)
+        asleep: isVehicleAsleep(instance.lastVehicle, { last429At: instance.last429At })
       });
       this.logThrottle(instance, throttle, delay);
       const snapshot = instance.lastVehicle || (config.vin ? this.store.loadSnapshot(config.vin) : null);
@@ -402,6 +406,20 @@ module.exports = NodeHelper.create({
     const floor = Number(throttle?.waitMs);
     const jittered = withJitter(scheduled, 0.1);
     return Number.isFinite(floor) && floor > 0 ? Math.max(floor, jittered) : jittered;
+  },
+
+  rememberAsleepLatch(instance, throttle, vehicle) {
+    if (ignitionOn(vehicle)) {
+      if (instance.last429At) {
+        this.logInfo(`${this.label(instance)} ignition on; clearing 429 asleep latch`);
+      }
+      instance.last429At = null;
+      return;
+    }
+    if (Number(throttle?.status) === 429) {
+      instance.last429At = Date.now();
+      this.logInfo(`${this.label(instance)} 429 latch set; next parked poll will use asleep skips`);
+    }
   },
 
   async pollEndpoints(instance, client, plan) {

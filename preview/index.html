@@ -5,7 +5,7 @@
   <title>MMM-GeneralMotorsEV preview</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="../MMM-GeneralMotorsEV.css?v=23" />
+  <link rel="stylesheet" href="../MMM-GeneralMotorsEV.css?v=24" />
   <style>
     html, body {
       margin: 0;
@@ -87,7 +87,10 @@
       stale: true,
       rateLimited: true,
       retryAfter: "180",
-      nextRefreshAt: "2026-09-04T08:55:00-07:00"
+      nextRefreshAt: "2026-09-04T08:55:00-07:00",
+      advDiagnosticsStatus: "CHECK",
+      advDiagnosticsStatusColor: "YELLOW",
+      recommendedAction: "Inflate left front tire"
     };
 
     function renderModule(el, v, opts) {
@@ -142,6 +145,12 @@
       const odo = Math.round(v.odometerKm / 1.609344).toLocaleString() + " mi";
       const eta = v.chargeEta ? etaStr(v.chargeEta) : null;
       const rows = [];
+      const diagColor = String(v.advDiagnosticsStatusColor || "").toUpperCase();
+      const diagText = v.recommendedAction || v.advDiagnosticsStatus;
+      const statusCss = { RED: "red", YELLOW: "yellow", ORANGE: "orange", AMBER: "goldenrod" };
+      if (diagColor && diagColor !== "GREEN" && diagText) {
+        rows.push(["mdi-car-wrench", "Diagnostics", diagText, false, statusCss[diagColor] || "yellow"]);
+      }
       if (v.charging && eta) rows.push(["mdi-clock-outline", "Time to target", eta]);
       rows.push(["mdi-counter", "Odometer", odo]);
       rows.push(["mdi-battery-charging-80", "Charge target", v.chargeTarget + "%"]);
@@ -170,9 +179,11 @@
       if (mo.lineHeight) ul.style.setProperty("--gmv-metric-line-height", typeof mo.lineHeight === "number" ? mo.lineHeight + "px" : mo.lineHeight);
       if (mo.spacing != null) ul.style.setProperty("--gmv-metric-row-gap", typeof mo.spacing === "number" ? mo.spacing + "px" : mo.spacing);
       if (mo.valueSpacing != null) ul.style.setProperty("--gmv-metric-value-gap", typeof mo.valueSpacing === "number" ? mo.valueSpacing + "px" : mo.valueSpacing);
-      ul.innerHTML = rows.map(([icon, name, value, stale]) =>
-        `<li class="gmv-metric${stale ? " is-stale" : ""}"><span class="icon mdi ${icon}"></span><span class="name">${name}</span><span class="value">${value}</span></li>`
-      ).join("");
+      ul.innerHTML = rows.map(([icon, name, value, stale, color]) => {
+        const cls = "gmv-metric" + (stale ? " is-stale" : "") + (color ? " is-alert" : "");
+        const style = color ? ` style="color:${color}"` : "";
+        return `<li class="${cls}"${style}><span class="icon mdi ${icon}"></span><span class="name">${name}</span><span class="value">${value}</span></li>`;
+      }).join("");
       return ul;
     }
 

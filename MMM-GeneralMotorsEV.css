@@ -301,6 +301,25 @@
   text-decoration: none;
 }
 
+.gmv-metric.is-alert {
+  align-items: flex-start;
+  opacity: 1;
+}
+
+.gmv-metric.is-alert .icon,
+.gmv-metric.is-alert .name,
+.gmv-metric.is-alert .value {
+  color: inherit;
+  font-weight: 700;
+  opacity: 1;
+}
+
+.gmv-metric.is-alert .value {
+  white-space: normal;
+  text-align: right;
+  max-width: 70%;
+}
+
 .gmv-map-wrap {
   margin-top: 12px;
   border-radius: 6px;

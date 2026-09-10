@@ -123,9 +123,9 @@ MagicMirror sends `config.js` to the browser, so prefer environment variables fo
 | `metricOptions.spacing` | `0` | Extra gap between metric rows |
 | `metricOptions.valueSpacing` | `12` | Space between the label and the value |
 | `refreshInterval` | `900` | Time between API polls. Numbers below `60000` are **seconds** (`900` = 15 min). `60000` or more is treated as milliseconds. Minimum 60s. Each poll is logged as `[MMM-GeneralMotorsEV] … poll done … next in …` |
-| `forceRefreshEV` | `false` | `false` reads GM’s cached EV metrics. `true` wakes the vehicle for live SOC, but only as often as `forceRefreshEVInterval`, and **not while the vehicle is asleep** (ignition off, unplugged) |
+| `forceRefreshEV` | `false` | `false` reads GM’s cached EV metrics. `true` wakes the vehicle for live SOC, but only as often as `forceRefreshEVInterval`, and **not while the vehicle is asleep** (ignition off, unplugged, after a 429) |
 | `forceRefreshEVInterval` | same as `refreshInterval` | How often to call `refreshEVChargingMetrics` when `forceRefreshEV` is `true`. Same number rules as `refreshInterval`. Other polls (`diagnostics`, cached EV get, location) still use `refreshInterval` |
-| `asleepRefreshInterval` | 2× `refreshInterval` (min 30 min) | How often to run the live `location()` ping (and skip fresh diagnostics) while parked and unplugged. `getEVChargingMetrics` still uses `refreshInterval` |
+| `asleepRefreshInterval` | 2× `refreshInterval` (min 30 min) | How often to run the live `location()` ping (and skip fresh diagnostics) while **asleep**. Asleep is ignition off, unplugged, **and** a 429 has already been seen. Until that 429, parked polls still use `refreshInterval`. `getEVChargingMetrics` still uses `refreshInterval` even while asleep |
 | `showApiDebug` | `false` | Log each OnStar HTTP call (status code and JSON body) to the MagicMirror log. Token-like fields are redacted and large bodies are truncated. Nothing is shown on the module or written to `cache/` snapshots |
 | `timeFormat` | `12` | `12` shows `1:07 PM`. `24` shows `13:07`. Independent of the Pi’s locale |
 | `imperial` | `true` | Miles, °F, psi. `false` uses km, °C, kPa |
@@ -247,11 +247,14 @@ displayOptions: {
   battery12v: { visible: true },
   tpms: { visible: true },
   batteryBar: { visible: true },
-  temperatures: { visible: true }
+  temperatures: { visible: true },
+  diagnostics: { visible: true }
 }
 ```
 
 Oil life is never shown. Charge target (`tcl` from EV metrics) occupies that slot. **Scheduled charge start** appears under it when diagnostics return `EV SCHEDULED CHARGE START`. The battery meter is a Teslamate-style cell (rounded body, plus-pole nub, green fill). SOC % is drawn on the cell; EV plug voltage (`EV PLUG VOLTAGE`) sits under it when the vehicle reports a non-zero AC input. The 12V battery (`INTERM VOLT BATT VOLT`) sits in the same grid as odometer. When all four TPMS values are present they appear on one line as pressure values only.
+
+If advanced diagnostics report `advDiagnosticsStatusColor` other than `GREEN`, the **recommended action** is shown at the top of that metric grid in that status color (`YELLOW` → yellow, `RED` → red). Hide it with `displayOptions.diagnostics.visible: false`. A green status is not shown.
 
 ### Map tiles
 
@@ -344,7 +347,7 @@ Each cycle, per VIN, calls run **one after another** (not in parallel) with a sh
 3. `location()` — live digital-twin GPS (can SMS-wake the module). Used when EV metrics have no coordinates, on a **manual refresh**, and on a slower timer while parked (`asleepRefreshInterval`, default 30 min). Cached EV GPS is not treated as a live fix.
 4. `getVehicleDetails()` — make/model/year/nickname/image. Cached for 24 hours after the first success
 
-While ignition is off and the vehicle is unplugged, the helper treats it as **asleep**: it does not call `refreshEVChargingMetrics` and skips diagnostics when they are still fresh. `getEVChargingMetrics` still runs every `refreshInterval`; if that cached packet includes new GPS, the map updates on that same schedule. A live `location()` ping still runs when the last one is older than `asleepRefreshInterval`, because the EV GET often returns a stale GPS fix. Charging or ignition on can use `refreshEVChargingMetrics` when `forceRefreshEV` is on.
+While ignition is off and the vehicle is unplugged, GM often still answers **four or five** more polls. The helper does **not** treat that as asleep yet. After a **429**, the next parked poll is asleep: it does not call `refreshEVChargingMetrics` and skips diagnostics when they are still fresh. Ignition on clears that 429 latch. `getEVChargingMetrics` still runs every `refreshInterval`; if that cached packet includes new GPS, the map updates on that same schedule. A live `location()` ping still runs when the last one is older than `asleepRefreshInterval`, because the EV GET often returns a stale GPS fix. Charging or ignition on can use `refreshEVChargingMetrics` when `forceRefreshEV` is on.
 
 Tire pressures come from `diagnostics()`, not from the EV metrics call. A 429 on any call retries a few times with exponential backoff and jitter (and honors `Retry-After` when it is longer than that in-loop wait). After that it delays the next poll (or backs off to 2× the current cadence if the header is missing). The module shows **Next refresh** under **Updated** while that wait is in effect.
 
