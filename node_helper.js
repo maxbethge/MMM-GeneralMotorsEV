@@ -17,7 +17,7 @@ const { demoForVin } = require("./lib/demo-data");
 const { refreshIntervalMs, formatDuration, settledLabel, shouldForceRefreshEV } = require("./lib/refresh-interval");
 const { extractThrottle, throttleFromSettled, nextDelayMs, formatThrottle } = require("./lib/throttle");
 const { fetchWithBackoff, is429Error, sleep, withJitter } = require("./lib/backoff");
-const { planPoll, pollDelayMs, isVehicleAsleep } = require("./lib/poll-plan");
+const { planPoll, pollDelayMs, isVehicleAsleep, hasCoordinates } = require("./lib/poll-plan");
 const { httpStatus, errorBodyPreview, shouldFallbackEvRefresh } = require("./lib/http-error");
 
 function tireLog(value) {
@@ -254,6 +254,7 @@ module.exports = NodeHelper.create({
       const plan = planPoll({
         vehicle: previous,
         refreshMs: instance.refreshMs,
+        asleepRefresh: instance.config.asleepRefreshInterval,
         forceEV: forceEVWanted,
         forceEVUnsupported: instance.forceEvUnsupported,
         lastDiagnosticsAt: instance.lastDiagnosticsAt,
@@ -261,6 +262,9 @@ module.exports = NodeHelper.create({
         lastLocationAt: instance.lastLocationAt,
         manual: reason === "manual"
       });
+      if (!plan.location && !instance.lastLocationAt && hasCoordinates(previous)) {
+        instance.lastLocationAt = Date.now();
+      }
       let evCall = plan.forceEV ? "refreshEVChargingMetrics" : "getEVChargingMetrics";
       this.logInfo(
         `${this.label(instance)} poll plan asleep=${plan.asleep} ` +
@@ -380,8 +384,6 @@ module.exports = NodeHelper.create({
     }
     const scheduled = pollDelayMs({
       refreshMs: instance.refreshMs,
-      asleepRefresh: instance.config.asleepRefreshInterval,
-      asleep,
       throttle,
       nextDelayMs
     });
