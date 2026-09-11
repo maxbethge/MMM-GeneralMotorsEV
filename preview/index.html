@@ -5,7 +5,7 @@
   <title>MMM-GeneralMotorsEV preview</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css" />
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <link rel="stylesheet" href="../MMM-GeneralMotorsEV.css?v=24" />
+  <link rel="stylesheet" href="../MMM-GeneralMotorsEV.css?v=25" />
   <style>
     html, body {
       margin: 0;
@@ -128,7 +128,7 @@
               <div class="gmv-battery-well">
                 <div class="gmv-battery-fill" style="width:${v.batteryLevel}%"></div>
                 <div class="gmv-battery-target" style="left:${v.chargeTarget}%"></div>
-                <div class="gmv-battery-overlay">
+                <div class="gmv-battery-overlay${v.plugVoltage ? " has-voltage" : ""}">
                   <div class="gmv-battery-soc">${v.charging ? '<span class="mdi mdi-lightning-bolt gmv-battery-bolt"></span>' : ""}<span class="gmv-battery-soc-number">${v.batteryLevel}</span><span class="gmv-battery-soc-unit">%</span></div>
                   ${v.plugVoltage ? `<div class="gmv-battery-voltage">${v.plugVoltage} V</div>` : ""}
                 </div>

@@ -219,10 +219,22 @@
   font-weight: 400;
 }
 
+.gmv-battery-overlay.has-voltage .gmv-battery-soc-number {
+  font-size: 0.71rem;
+}
+
 .gmv-battery-soc-unit {
   font-size: 0.58rem;
   margin-left: 3px;
   opacity: 0.85;
+}
+
+.gmv-battery-overlay.has-voltage .gmv-battery-soc-unit {
+  font-size: 0.41rem;
+}
+
+.gmv-battery-overlay.has-voltage .gmv-battery-bolt {
+  font-size: 0.5rem;
 }
 
 .gmv-battery-voltage {

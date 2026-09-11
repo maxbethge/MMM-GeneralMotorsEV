@@ -324,6 +324,9 @@ Module.register("MMM-GeneralMotorsEV", {
 
     const overlay = document.createElement("div");
     overlay.className = "gmv-battery-overlay";
+    if (this.hasPlugVoltage(v)) {
+      overlay.classList.add("has-voltage");
+    }
     const socLine = document.createElement("div");
     socLine.className = "gmv-battery-soc";
     if (v.charging) {
